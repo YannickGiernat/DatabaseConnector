@@ -842,10 +842,24 @@ connectUsingDbi <- function(dbiConnectionDetails) {
 connectDuckdb <- function(connectionDetails) {
   inform("Connecting using DuckDB driver")
   ensure_installed("duckdb")
+  
+  # Extract config from extraSettings if provided
+  duckdbConfig <- NULL
+  if (!is.null(connectionDetails$extraSettings) && !is.null(connectionDetails$extraSettings$config)) {
+    duckdbConfig <- connectionDetails$extraSettings$config
+  }
+  
+  # Create DuckDB driver with config if provided
+  drv <- if (is.null(duckdbConfig)) {
+    duckdb::duckdb()
+  } else {
+    duckdb::duckdb(config = duckdbConfig)
+  }
+  
   connection <- connectUsingDbi(
     createDbiConnectionDetails(
       dbms = connectionDetails$dbms,
-      drv = duckdb::duckdb(),
+      drv = drv,
       dbdir = connectionDetails$server(),
       bigint = "integer64"
     )
