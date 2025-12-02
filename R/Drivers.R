@@ -83,9 +83,9 @@ downloadJdbcDrivers <- function(dbms, pathToDriver = Sys.getenv("DATABASECONNECT
     warn(paste0("The folder location '", pathToDriver, "' does not exist. Attempting to create."))
     dir.create(pathToDriver, recursive = TRUE)
   }
-
+  
   stopifnot(is.character(dbms), length(dbms) == 1, dbms %in% c("all", "postgresql", "redshift", "sql server", "oracle", "pdw", "snowflake", "dremio", "spark", "bigquery", "iris"))
-
+  
   if (dbms == "pdw" || dbms == "synapse") {
     dbms <- "sql server"
   }
@@ -100,9 +100,9 @@ downloadJdbcDrivers <- function(dbms, pathToDriver = Sys.getenv("DATABASECONNECT
     6,snowflake,snowflake-jdbc-3.24.0.jar,https://repo1.maven.org/maven2/net/snowflake/snowflake-jdbc/3.24.0/
     7,bigquery,SimbaJDBCDriverforGoogleBigQuery42_1.6.2.1003.zip,https://storage.googleapis.com/simba-bq-release/jdbc/
     8,iris,intersystems-jdbc-3.10.2.jar,https://repo1.maven.org/maven2/com/intersystems/intersystems-jdbc/3.10.2/
-    9,dremio,dremio-jdbc-driver-26.0.0-202504290223270716-afdd6663.jar,https://download.dremio.com/jdbc-driver/26.0.0-202504290223270716-afdd6663/"
+    9,dremio,dremio-jdbc-driver-LATEST.jar,https://download.dremio.com/jdbc-driver/"
   )
-
+  
   if (dbms == "all") {
     dbms <- jdbcDriverSources$dbms
   }
