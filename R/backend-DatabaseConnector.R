@@ -88,6 +88,16 @@ sql_translation.DatabaseConnectorJdbcConnection <- function(con) {
      rlang::abort("Sql dialect is not supported!")) 
 }
 
+#' @export
+#' @importFrom dbplyr sql_translation 
+sql_translation.DatabaseConnectorDbiConnection <- function(con) {
+  
+  switch(dbms(con),
+    "sqlite" = utils::getFromNamespace("sql_translation.SQLiteConnection", "dbplyr")(con),
+    "duckdb" = utils::getFromNamespace("sql_translation.duckdb_connection", "duckdb")(con),
+    NextMethod()) 
+}
+
 
 #' @importFrom dbplyr sql_escape_logical
 #' @export
