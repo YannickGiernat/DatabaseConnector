@@ -1,3 +1,11 @@
+DatabaseConnector 7.0.1
+=======================
+
+Bugfixes:
+
+1. Fixed `getTableNames()` for DataBricks when quoting (using backticks) the database and/or schema name.
+
+
 DatabaseConnector 7.0.0
 =======================
 

@@ -1,4 +1,26 @@
 library(DatabaseConnector)
+library(testthat)
+
+# Test quotes around catalog for Databricks (Can't do in standard tests because catalog not known)
+connectionDetails = details <- createConnectionDetails(
+  dbms = "spark",
+  user = Sys.getenv("CDM5_SPARK_USER"),
+  password = URLdecode(Sys.getenv("CDM5_SPARK_PASSWORD")),
+  connectionString = Sys.getenv("CDM5_SPARK_CONNECTION_STRING")
+)
+connection <- connect(connectionDetails)
+tables <- getTableNames(connection, "hive_metastore.eunomia")
+expect_contains(tables, "person")
+
+tables <- getTableNames(connection, "`hive_metastore`.eunomia")
+expect_contains(tables, "person")
+
+tables <- getTableNames(connection, "hive_metastore.`eunomia`")
+expect_contains(tables, "person")
+
+disconnect(connection)
+
+
 
 Sys.setenv("DATABASECONNECTOR_JAR_FOLDER" = "C:/Users/MSCHUEMI/jdbcDrivers")
 downloadJdbcDrivers("redshift")
