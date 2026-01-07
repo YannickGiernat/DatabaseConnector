@@ -45,7 +45,7 @@ data$big_ints[7] <- NA
 data$big_ints[8] <- 3.3043e+10
 data$booleans[c(3,9)] <- NA 
 
-# testServer = testServers[[3]]
+# testServer = testServers[[1]]
 
 for (testServer in testServers) {
   test_that(addDbmsToLabel("Insert data", testServer), {
@@ -116,7 +116,7 @@ for (testServer in testServers) {
     } else if (dbms == "snowflake") {
       expect_equal(as.character(columnInfo$field.type), c("DATE", "TIMESTAMPNTZ", "NUMBER", "DOUBLE", "VARCHAR", "NUMBER", "BOOLEAN"))
     } else if (dbms == "spark") {
-      expect_equal(as.character(columnInfo$field.type), c("DATE", "TIMESTAMP", "INT", "FLOAT", "STRING", "BIGINT", "BOOLEAN"))
+      expect_equal(as.character(columnInfo$field.type), c("DATE", "TIMESTAMP", "INT", "DOUBLE", "STRING", "BIGINT", "BOOLEAN"))
     } else if (dbms == "bigquery") {
       expect_equal(as.character(columnInfo$field.type), c("DATE", "DATETIME", "INT64", "FLOAT64", "STRING", "INT64", "BOOLEAN"))
     } else if (dbms == "iris") {
