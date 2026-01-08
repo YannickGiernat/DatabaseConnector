@@ -1,9 +1,15 @@
-DatabaseConnector 7.0.1
+DatabaseConnector 7.1.0
 =======================
+
+Changes:
+
+1. Added ability to pass configuration details (such as setting the maximum memory) when connecting to DuckDB. See `?createConnectionDetails`.
 
 Bugfixes:
 
 1. Fixed `getTableNames()` for DataBricks when quoting (using backticks) the database and/or schema name.
+
+2. Fixing `dbplyr` translations for DuckDB.
 
 
 DatabaseConnector 7.0.0

@@ -155,6 +155,15 @@ SQLite:
 \item \code{server}. The path to the SQLIte file.
 }
 
+DuckDB:
+\itemize{
+\item \code{server}. The path to the DuckDB file.
+\item \code{extraSettings}. Additional settings for DuckDB. For DuckDB specifically, if
+\code{extraSettings$config} is provided, it will be passed to the
+\code{duckdb::duckdb()} constructor. For example:
+\code{extraSettings = list(config = list(memory_limit = "8GB", preserve_insertion_order = "false"))}
+}
+
 Spark / Databricks:
 
 Currently both JDBC and ODBC connections are supported for Spark. Set the
