@@ -736,30 +736,35 @@ connectSnowflake <- function(connectionDetails) {
   return(connection)
 }
 
+resolveDremioConnectionString <- function(connectionDetails) {
+  connectionString <- connectionDetails$connectionString()
+  if (!is.null(connectionString) && nzchar(trimws(connectionString))) {
+    return(connectionString)
+  }
+
+  server <- connectionDetails$server()
+  if (is.null(server) || !nzchar(trimws(server))) {
+    abort("Error: Server must be provided when connectionString is missing for Dremio")
+  }
+
+  port <- connectionDetails$port()
+  if (is.null(port) || !nzchar(as.character(port))) {
+    port <- 31010
+  }
+  sprintf("jdbc:dremio:direct=%s:%s", server, port)
+}
+
 connectDremio <- function(connectionDetails) {
   inform("Connecting using Dremio driver")
   jarPath <- findPathToJar("^dremio-jdbc-driver-.*\\.jar$", connectionDetails$pathToDriver)
   driver <- getJbcDriverSingleton("com.dremio.jdbc.Driver", jarPath)
-  if (is.null(connectionDetails$server()) || connectionDetails$port() == "") {
-    abort("Error: Connection string required for connecting to Dremio")
-  }
-  if (is.null(connectionDetails$connectionString())) { 
-    connectionStringDremio <- sprintf("jdbc:dremio:direct=%s:%d", connectionDetails$server(), connectionDetails$port())
-    connection <- connectUsingJdbcDriver(driver, 
-                                         connectionStringDremio, 
-                                         user = connectionDetails$user(),
-                                         password = connectionDetails$password(),
-                                         dbms = connectionDetails$dbms, 
-                                         identifierQuote = '"')
-  } else {
-    connection <- connectUsingJdbcDriver(driver,
-                                         connectionDetails$connectionString(),
-                                         user = connectionDetails$user(),
-                                         password = connectionDetails$password(),
-                                         dbms = connectionDetails$dbms,
-                                         identifierQuote = '"'
-    )
-  }
+  connectionStringDremio <- resolveDremioConnectionString(connectionDetails)
+  connection <- connectUsingJdbcDriver(driver,
+                                       connectionStringDremio,
+                                       user = connectionDetails$user(),
+                                       password = connectionDetails$password(),
+                                       dbms = connectionDetails$dbms,
+                                       identifierQuote = '"')
   return(connection)
 }
 
