@@ -50,6 +50,82 @@ setMethod(
       return(tables)
     }
     
+    # --- Dremio: INFORMATION_SCHEMA query (supports arbitrary nesting depth) ---
+    if (dbms(conn) == "dremio") {
+      # Dremio namespace hierarchy: <catalog>.<folder1>...<folderN>.<table>
+      # INFORMATION_SCHEMA.TABLES uses:
+      #   TABLE_CATALOG = first part
+      #   TABLE_SCHEMA  = all middle parts joined with "."
+      # We split char-by-char to correctly handle quoted identifiers containing dots or dashes.
+      sq <- function(s) gsub("'", "''", s, fixed = TRUE)
+
+      parts <- character(0)
+      current <- ""
+      in_quote <- FALSE
+      if (!is.null(databaseSchema)) {
+        for (ch in strsplit(databaseSchema, "")[[1]]) {
+          if (ch == '"') {
+            in_quote <- !in_quote
+            current <- paste0(current, ch)
+          } else if (ch == '.' && !in_quote) {
+            parts <- c(parts, current)
+            current <- ""
+          } else {
+            current <- paste0(current, ch)
+          }
+        }
+        parts <- c(parts, current)
+      }
+
+      unquote <- function(s) {
+        if (nchar(s) >= 2 && substr(s, 1, 1) == '"' && substr(s, nchar(s), nchar(s)) == '"') {
+          s <- substr(s, 2, nchar(s) - 1)
+          s <- gsub('""', '"', s, fixed = TRUE)
+        }
+        s
+      }
+      parts <- vapply(parts, unquote, character(1), USE.NAMES = FALSE)
+
+      n <- length(parts)
+      if (n < 1) {
+        rlang::abort("databaseSchema for Dremio must have at least one part (catalog)")
+      }
+
+      catalog_val <- parts[1]
+
+      if (n == 1) {
+        # Only catalog given — return all tables in that catalog
+        probeSql <- sprintf(
+          'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'%s\'',
+          sq(catalog_val)
+        )
+      } else {
+        # Middle parts form the schema (e.g. "dremio-ohdsi-connector.Synthea27NjParquet")
+        schema_val <- paste(parts[2:n], collapse = ".")
+        probeSql <- sprintf(
+          'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'%s\' AND TABLE_SCHEMA = \'%s\'',
+          sq(catalog_val), sq(schema_val)
+        )
+      }
+
+      stmt <- rJava::.jcall(conn@jConnection, "Ljava/sql/Statement;", "createStatement")
+      rs <- tryCatch(
+        rJava::.jcall(stmt, "Ljava/sql/ResultSet;", "executeQuery", probeSql),
+        error = function(e) {
+          tryCatch(rJava::.jcall(stmt, "V", "close"), error = function(e2) NULL)
+          rlang::abort(e$message)
+        }
+      )
+      tables <- character()
+      while (rJava::.jcall(rs, "Z", "next")) {
+        tables <- c(tables, rJava::.jcall(rs, "S", "getString", "TABLE_NAME"))
+      }
+      tryCatch(rJava::.jcall(rs,   "V", "close"), error = function(e) NULL)
+      tryCatch(rJava::.jcall(stmt, "V", "close"), error = function(e) NULL)
+      return(tables)
+    }
+    # --- end Dremio ---
+
     if (is.null(databaseSchema)) {
       database <- rJava::.jnull("java/lang/String")
       schema <- rJava::.jnull("java/lang/String")
