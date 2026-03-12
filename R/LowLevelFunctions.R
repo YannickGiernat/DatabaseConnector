@@ -143,7 +143,7 @@ waitForDremioTableVisible_JDBC <- function(connection, tableIdent,
       msg <- conditionMessage(e)
 
       # Recognize Dremio object-not-found
-      if (grepl("(?is)Object\\s+['\"][^'\"]+['\"]\\s+not\\s+found", msg)) {
+      if (grepl("(?is)\\bObject\\b\\s+(?:['\"][^'\"]+['\"]|[^\\s]+)\\s+not\\s+found(?:\\s+within\\s+(?:['\"][^'\"]+['\"]|[^\\s]+))?", msg)) {
         return(FALSE)
       }
 
