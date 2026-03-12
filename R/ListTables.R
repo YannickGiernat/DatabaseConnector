@@ -87,24 +87,23 @@ setMethod(
       parts <- vapply(parts, unquote, character(1), USE.NAMES = FALSE)
 
       n <- length(parts)
-      if (n < 1) {
-        rlang::abort("databaseSchema for Dremio must have at least one part (catalog)")
-      }
 
-      catalog_val <- parts[1]
-
-      if (n == 1) {
+      if (n == 0) {
+        # No databaseSchema given — return all tables visible to this connection
+        probeSql <- 'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES"'
+      } else if (n == 1) {
         # Only catalog given — return all tables in that catalog
         probeSql <- sprintf(
           'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'%s\'',
-          sq(catalog_val)
+          sq(parts[1])
         )
       } else {
-        # Middle parts form the schema (e.g. "dremio-ohdsi-connector.Synthea27NjParquet")
+        # First part = catalog, remaining parts = schema
+        # (e.g. "dremio-ohdsi-connector.Synthea27NjParquet")
         schema_val <- paste(parts[2:n], collapse = ".")
         probeSql <- sprintf(
           'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'%s\' AND TABLE_SCHEMA = \'%s\'',
-          sq(catalog_val), sq(schema_val)
+          sq(parts[1]), sq(schema_val)
         )
       }
 
