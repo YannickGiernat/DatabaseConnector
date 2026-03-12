@@ -195,7 +195,9 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
   log_msg("Starte SQL: ", sql)
 
   statement <- rJava::.jcall(connection@jConnection, "Ljava/sql/Statement;", "createStatement")
-  on.exit(sanitizeJavaErrorForRlang(rJava::.jcall(statement, "V", "close")))
+  on.exit({
+    if (!is.null(statement)) sanitizeJavaErrorForRlang(rJava::.jcall(statement, "V", "close", check = FALSE))
+  }, add = TRUE)
 
   db <- dbms(connection)
 
@@ -217,7 +219,7 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
     # 1) Hauptausführung
     # -------------------------------------------------------------------------
     hasResult <- sanitizeJavaErrorForRlang(
-      rJava::.jcall(statement, "Z", "execute", as.character(sql), check = FALSE)
+      rJava::.jcall(statement, "Z", "execute", as.character(sql), check = TRUE)
     )
 
     log_msg("Statement ausgeführt, beginne Drainen der JDBC‑ResultChains …")
@@ -245,7 +247,7 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
       }
 
       hasResult <- sanitizeJavaErrorForRlang(
-        rJava::.jcall(statement, "Z", "getMoreResults", check = FALSE)
+        rJava::.jcall(statement, "Z", "getMoreResults", check = TRUE)
       )
 
       step <- step + 1
@@ -269,6 +271,9 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
   if (isDremioCtas(sql)) {
     created <- extractCreatedTableFromCtas(sql)
     if (!is.na(created)) {
+      sanitizeJavaErrorForRlang(rJava::.jcall(statement, "V", "close", check = FALSE))
+      # prevent double-close from on.exit
+      statement <- NULL
       waitForDremioTableVisible(connection, created, timeout_secs = 60)
     }
   }
