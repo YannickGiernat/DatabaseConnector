@@ -260,12 +260,7 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
     # 2) Barrier‑Query
     # -------------------------------------------------------------------------
 
-    #if (isDremioCtas(sql)) {
-    #  created <- extractCreatedTableFromCtas(sql)
-    #  if (!is.na(created)) {
-    #    waitForDremioTableVisible(connection, created, timeout_secs = 60)
-    #  }
-    #}
+
 
   } else {
 
@@ -282,7 +277,12 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
     delayIfNecessaryForDdl(sql)
     delayIfNecessaryForInsert(sql)
   }
-
+  if (isDremioCtas(sql)) {
+    created <- extractCreatedTableFromCtas(sql)
+    if (!is.na(created)) {
+      waitForDremioTableVisible(connection, created, timeout_secs = 60)
+    }
+  }
   log_msg("SQL vollständig abgeschlossen.")
 
   invisible(rowsAffected)
