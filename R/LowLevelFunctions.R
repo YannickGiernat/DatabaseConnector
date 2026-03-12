@@ -136,16 +136,13 @@ waitForDremioTableVisible <- function(connection, tableIdent,
       TRUE
     }, error = function(e) {
       msg <- conditionMessage(e)
-      # Narrow match: only retry on Dremio "Object ... not found within ..."
-      cat("\n----- PROBE ERROR BEGIN -----\n")
-      cat(msg, "\n")
-      cat("----- PROBE ERROR END -----\n")
+      msg_l <- tolower(msg)
 
-      # zusätzlich: strukturierte Darstellung (zeigt Escape/Zeilenumbrüche)
-      cat("MSG DPUT:\n")
-      dput(msg)
-      cat("\n")
-      if (grepl("(?is)Object\\s+['\"][^'\"]+['\"]\\s+not\\s+found", msg, perl = TRUE)) {
+      is_not_found <- grepl("validation error:", msg_l, fixed = TRUE) &&
+        grepl("object", msg_l, fixed = TRUE) &&
+        grepl("not found", msg_l, fixed = TRUE)
+
+      if (is_not_found) {
         FALSE
       } else {
         stop(e)
