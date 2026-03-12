@@ -106,6 +106,19 @@ setMethod(
       }
       tryCatch(rJava::.jcall(rs,   "V", "close"), error = function(e) NULL)
       tryCatch(rJava::.jcall(stmt, "V", "close"), error = function(e) NULL)
+      if (length(tables) == 0 && !is.null(databaseSchema)) {
+        # Help the user diagnose a mismatch between their schema string and
+        # what Dremio actually stores in INFORMATION_SCHEMA."TABLES".
+        # The TABLE_SCHEMA value in Dremio is the source/space path as configured
+        # in Dremio (e.g. "nessie_storagegrid.OHDSI"), which may differ from the
+        # quoted identifier used in SQL (e.g. '"storagegrid"."OHDSI"').
+        warn(paste0(
+          "getTableNames returned no tables for databaseSchema = '", databaseSchema, "'.\n",
+          "The following SQL was executed:\n  ", probeSql, "\n",
+          "To verify, run this in your R session to see all available TABLE_SCHEMA values:\n",
+          '  querySql(connection, \'SELECT DISTINCT TABLE_SCHEMA FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'\'DREMIO\'\' LIMIT 30\')'
+        ))
+      }
       return(tables)
     }
     # --- end Dremio ---
