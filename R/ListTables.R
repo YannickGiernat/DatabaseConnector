@@ -93,11 +93,11 @@ setMethod(
 
       if (n == 0) {
         # No databaseSchema given — return all tables visible to this connection
-        probeSql <- 'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES"'
+        probeSql <- "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES"
       } else if (n == 1) {
         # Only catalog given — return all tables in that catalog
         probeSql <- sprintf(
-          'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'%s\'',
+          "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_CATALOG = '%s'",
           sq(parts[1])
         )
       } else {
@@ -105,7 +105,7 @@ setMethod(
         # (e.g. "dremio-ohdsi-connector.Synthea27NjParquet")
         schema_val <- paste(parts[2:n], collapse = ".")
         probeSql <- sprintf(
-          'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'%s\' AND TABLE_SCHEMA = \'%s\'',
+          "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_CATALOG = '%s' AND TABLE_SCHEMA = '%s'",
           sq(parts[1]), sq(schema_val)
         )
       }
