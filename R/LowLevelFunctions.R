@@ -66,7 +66,7 @@ parseJdbcColumnData <- function(batchedQuery,
     columns[[i]] <- column
   }
   names(columns) <- rJava::.jcall(batchedQuery, "[Ljava/lang/String;", "getColumnNames")
-  
+
   # More efficient than as.data.frame, as it avoids converting row.names to character:
   columns <- structure(columns, class = "data.frame", row.names = seq_len(length(columns[[1]])))
   return(columns)
@@ -82,7 +82,7 @@ delayIfNecessary <- function(sql, regex, executionTimes, threshold) {
     currentTime <- Sys.time()
     lastExecutedTime <- executionTimes[[tableName]]
     if (!is.na(lastExecutedTime) && !is.null(lastExecutedTime)) {
-      delta <- difftime(currentTime, lastExecutedTime, units = "secs") 
+      delta <- difftime(currentTime, lastExecutedTime, units = "secs")
       if (delta < threshold) {
         Sys.sleep(threshold - delta)
       }
@@ -121,18 +121,28 @@ extractCreatedTableFromCtas <- function(sql) {
 
 # Poll until the created table is queryable (Dremio-only)
 waitForDremioTableVisible <- function(connection, tableIdent,
-                                       timeout_secs = 60,
-                                       initial_sleep = 0.2,
-                                       max_sleep = 2.0) {
+                                      timeout_secs = 60,
+                                      initial_sleep = 0.2,
+                                      max_sleep = 2.0) {
   start <- Sys.time()
   sleep <- initial_sleep
 
   probeSql <- paste0("SELECT 1 FROM ", tableIdent, " LIMIT 1")
-
   repeat {
-    ok <- tryCatch({
+    ok <- FALSE
+    # low level JDBC statement:
+    stmt <- rJava::.jcall(connection@jConnection,
+                          "Ljava/sql/Statement;",
+                          "createStatement")
+
+    on.exit(rJava::.jcall(stmt, "V", "close"), add = TRUE)
+
+    # try low-level execute
+    res <- tryCatch({
+      rJava::.jcall(stmt, "Z", "execute", probeSql, check = FALSE)
+
       # use the SAME connection; querySql should be synchronous on success
-      DatabaseConnector::querySql(connection, probeSql)
+      #DatabaseConnector::querySql(connection, probeSql)
       TRUE
     }, error = function(e) {
       msg <- conditionMessage(e)
@@ -212,7 +222,7 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
       } else {
         updateCount <- rJava::.jcall(statement, "I", "getUpdateCount", check = FALSE)
         if (updateCount == -1L) {
-          log_msg("  UpdateChain endet nach ", step-1, " Iterationen.")
+          log_msg("  UpdateChain endet nach ", step - 1, " Iterationen.")
           break
         }
         rowsAffected <- rowsAffected + updateCount
@@ -260,9 +270,9 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
 
 trySettingAutoCommit <- function(connection, value) {
   tryCatch(
-    {
-      rJava::.jcall(connection@jConnection, "V", "setAutoCommit", value)
-    },
+  {
+    rJava::.jcall(connection@jConnection, "V", "setAutoCommit", value)
+  },
     error = function(cond) {
       # do nothing
     }
@@ -274,7 +284,7 @@ lowLevelDbSendQuery <- function(conn, statement) {
     abort("Connection is closed")
   }
   dbms <- dbms(conn)
-  
+
   # For Oracle, remove trailing semicolon:
   statement <- gsub(";\\s*$", "", statement)
   tryCatch(
@@ -290,7 +300,7 @@ lowLevelDbSendQuery <- function(conn, statement) {
       rlang::abort(error$message)
     }
   )
-  
+
   result <- new("DatabaseConnectorJdbcResult",
                 content = batchedQuery,
                 type = "batchedQuery",
