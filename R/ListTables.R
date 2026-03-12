@@ -1,6 +1,6 @@
 # @file ListTables.R
 #
-# Copyright 2025 Observational Health Data Sciences and Informatics
+# Copyright 2026 Observational Health Data Sciences and Informatics
 #
 # This file is part of DatabaseConnector
 #
@@ -196,7 +196,7 @@ existsTable <- function(connection, databaseSchema, tableName) {
 }
 
 cleanDatabaseName <- function(name) {
-  if (grepl("^\\[.*\\]$", name) || grepl("^\".*\"$", name)) {
+  if (grepl("^\\[.*\\]$", name) || grepl("^\".*\"$", name) || grepl("^`.*`$", name)) {
     name <- substr(name, 2, nchar(name) - 1)
   }
   return(name)

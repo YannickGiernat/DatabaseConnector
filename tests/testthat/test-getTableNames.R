@@ -11,5 +11,12 @@ for (testServer in testServers) {
     if (testServer$connectionDetails$dbms != "sql server") {
       expect_true(DBI::dbExistsTable(connection, "person"))
     }
+    
+    # Quotes in schema identifier:
+    if (testServer$connectionDetails$dbms == "spark") {
+      tables <- getTableNames(connection, paste0("`", testServer$cdmDatabaseSchema, "`"))
+      expect_true("person" %in% tables)
+    }
+    
   })
 }

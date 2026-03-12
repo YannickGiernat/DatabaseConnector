@@ -1,4 +1,4 @@
-# Copyright 2025 Observational Health Data Sciences and Informatics
+# Copyright 2026 Observational Health Data Sciences and Informatics
 #
 # This file is part of DatabaseConnector
 #
@@ -71,6 +71,10 @@ sql_query_select.DatabaseConnectorJdbcConnection <- function(con,
   )
 }
 
+# Export a sql_translation method for JDBC connections that allows dplyr code to 
+# be correctly translated to SQL code. These functions are 
+# imported from the dbplyr package.
+
 #' @export
 #' @importFrom dbplyr sql_translation 
 sql_translation.DatabaseConnectorJdbcConnection <- function(con) {
@@ -86,6 +90,20 @@ sql_translation.DatabaseConnectorJdbcConnection <- function(con) {
      "synapse" = utils::getFromNamespace("sql_translation.Microsoft SQL Server", "dbplyr")(con),
      "iris" = utils::getFromNamespace("sql_translation.PqConnection", "dbplyr")(con),
      rlang::abort("Sql dialect is not supported!")) 
+}
+
+# In addition to JDBC connections, DatabaseConnector also wraps duckdb and sqlite DBI connections
+# Export a method to get correct dplyr to SQL translation environments when using these wrapped DBI connections
+# See https://github.com/OHDSI/DatabaseConnector/issues/324
+
+#' @export
+#' @importFrom dbplyr sql_translation 
+sql_translation.DatabaseConnectorDbiConnection <- function(con) {
+  
+  switch(dbms(con),
+    "sqlite" = utils::getFromNamespace("sql_translation.SQLiteConnection", "dbplyr")(con),
+    "duckdb" = utils::getFromNamespace("sql_translation.duckdb_connection", "duckdb")(con),
+    NextMethod()) 
 }
 
 

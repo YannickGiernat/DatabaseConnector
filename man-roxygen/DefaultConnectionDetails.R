@@ -107,6 +107,14 @@
 #' 
 #'  - `server`. The path to the SQLIte file.
 #' 
+#' DuckDB:
+#' 
+#'  - `server`. The path to the DuckDB file.
+#'  - `extraSettings`. Additional settings for DuckDB. For DuckDB specifically, if 
+#'         `extraSettings$config` is provided, it will be passed to the 
+#'         `duckdb::duckdb()` constructor. For example: 
+#'         `extraSettings = list(config = list(memory_limit = "8GB", preserve_insertion_order = "false"))`
+#' 
 #' Spark / Databricks:
 #' 
 #' Currently both JDBC and ODBC connections are supported for Spark. Set the 
