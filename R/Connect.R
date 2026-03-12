@@ -755,6 +755,29 @@ resolveDremioConnectionString <- function(connectionDetails) {
 }
 
 connectDremio <- function(connectionDetails) {
+  # The Dremio JDBC driver is built on Apache Arrow, which accesses JDK internals
+  # (java.nio) via reflection. Java 9+ blocks this by default (Strong Encapsulation).
+  # The required JVM flag must be passed BEFORE the JVM starts, i.e. before
+  # library(DatabaseConnector) is called — it cannot be applied retroactively.
+  #
+  # Required setup in your R script / .Rprofile:
+  #   options(java.parameters = "--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED")
+  #   library(DatabaseConnector)  # <- JVM starts here with the flag
+  javaParams <- paste(getOption("java.parameters", default = ""), collapse = " ")
+  if (!grepl("add-opens", javaParams, fixed = TRUE)) {
+    abort(paste(
+      "Connecting to Dremio requires a JVM flag that must be set BEFORE loading DatabaseConnector.",
+      "",
+      "Add the following line to your script or ~/.Rprofile BEFORE library(DatabaseConnector):",
+      "",
+      '  options(java.parameters = "--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED")',
+      "",
+      "Background: The Dremio JDBC driver uses Apache Arrow internally, which needs access to",
+      "java.nio internals via reflection. Java 9+ blocks this by default. The JVM cannot be",
+      "reconfigured after startup, so the option must be set before the JVM is initialized.",
+      sep = "\n"
+    ))
+  }
   inform("Connecting using Dremio driver")
   jarPath <- findPathToJar("^dremio-jdbc-driver-.*\\.jar$", connectionDetails$pathToDriver)
   driver <- getJbcDriverSingleton("com.dremio.jdbc.Driver", jarPath)
