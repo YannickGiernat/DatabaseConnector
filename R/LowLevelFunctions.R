@@ -137,7 +137,7 @@ waitForDremioTableVisible <- function(connection, tableIdent,
     }, error = function(e) {
       msg <- conditionMessage(e)
       # Narrow match: only retry on Dremio "Object ... not found within ..."
-      if (grepl("Object\\s+'.+'\\s+not\\s+found\\s+within", msg, ignore.case = TRUE, perl = TRUE)) {
+      if (grepl("Object\\s+'.+'\\s+not\\s+found\\.", msg, ignore.case = TRUE, perl = TRUE)) {
         FALSE
       } else {
         stop(e)
@@ -225,12 +225,12 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
     # 2) Barrier‑Query
     # -------------------------------------------------------------------------
 
-    #if (isDremioCtas(sql)) {
-    #  created <- extractCreatedTableFromCtas(sql)
-    #  if (!is.na(created)) {
-    #    waitForDremioTableVisible(connection, created, timeout_secs = 60)
-    #  }
-    #}
+    if (isDremioCtas(sql)) {
+      created <- extractCreatedTableFromCtas(sql)
+      if (!is.na(created)) {
+        waitForDremioTableVisible(connection, created, timeout_secs = 60)
+      }
+    }
 
   } else {
 
