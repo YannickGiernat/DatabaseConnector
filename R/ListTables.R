@@ -57,7 +57,10 @@ setMethod(
       #   TABLE_CATALOG = first part
       #   TABLE_SCHEMA  = all middle parts joined with "."
       # We split char-by-char to correctly handle quoted identifiers containing dots or dashes.
+      # as.character() strips DBI::SQL and other character subclasses so that
+      # character comparisons (ch == '"') and strsplit work reliably.
       sq <- function(s) gsub("'", "''", s, fixed = TRUE)
+      if (!is.null(databaseSchema)) databaseSchema <- as.character(databaseSchema)
 
       parts <- character(0)
       current <- ""
@@ -181,6 +184,10 @@ setMethod(
 #'
 #' @export
 getTableNames <- function(connection, databaseSchema = NULL, cast = "lower") {
+  # Strip DBI::SQL and other character subclasses (e.g. from DBI::SQL(...) wrapping)
+  # so that all downstream code receives a plain character scalar.
+  if (!is.null(databaseSchema)) databaseSchema <- as.character(databaseSchema)
+
   errorMessages <- checkmate::makeAssertCollection()
   checkmate::assertTRUE(DBI::dbIsValid(connection))
   checkmate::assertCharacter(databaseSchema, len = 1, null.ok = TRUE, add = errorMessages)
