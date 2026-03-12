@@ -169,11 +169,6 @@ waitForDremioTableVisible <- function(connection, tableIdent,
     is_not_found <- grepl("object", msg_l, fixed = TRUE) && grepl("not found", msg_l, fixed = TRUE)
 
     cat(sprintf("[probe] ok=%s is_not_found=%s sleep=%.2fs\n", ok, is_not_found, sleep))
-    if (!ok) cat("[probe] tableIdent=", tableIdent, "\n")
-      cat("\n[waitForDremioTableVisible] probe failed\n")
-      cat("SQL: ", probeSql, "\n", sep = "")
-      cat("MSG: ", msg, "\n", sep = "")
-      cat("is_not_found=", is_not_found, "\n")
 
     if (!is_not_found) {
       # Not our expected transient condition -> fail loudly with original error
