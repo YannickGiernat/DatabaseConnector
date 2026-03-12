@@ -129,7 +129,6 @@ waitForDremioTableVisible <- function(connection, tableIdent,
 
   probeSql <- paste0("SELECT 1 FROM ", tableIdent, " LIMIT 1")
   repeat {
-    ok <- FALSE
     # low level JDBC statement:
     stmt <- rJava::.jcall(connection@jConnection,
                           "Ljava/sql/Statement;",
@@ -138,8 +137,8 @@ waitForDremioTableVisible <- function(connection, tableIdent,
     on.exit(rJava::.jcall(stmt, "V", "close"), add = TRUE)
 
     # try low-level execute
-    res <- tryCatch({
-      rJava::.jcall(stmt, "Z", "execute", probeSql, check = FALSE)
+    ok <- tryCatch({
+      rJava::.jcall(stmt, "Z", "execute", probeSql)
 
       # use the SAME connection; querySql should be synchronous on success
       #DatabaseConnector::querySql(connection, probeSql)
