@@ -128,24 +128,28 @@ waitForDremioTableVisible <- function(connection, tableIdent,
   sleep <- initial_sleep
 
   probeSql <- paste0("SELECT 1 FROM ", tableIdent, " LIMIT 1")
+
   repeat {
-    # low level JDBC statement:
-    stmt <- rJava::.jcall(connection@jConnection,
-                          "Ljava/sql/Statement;",
-                          "createStatement")
-
-    on.exit(rJava::.jcall(stmt, "V", "close"), add = TRUE)
-
-    # try low-level execute
     ok <- tryCatch({
-      rJava::.jcall(stmt, "Z", "execute", probeSql)
+      stmt <- rJava::.jcall(connection@jConnection,
+                            "Ljava/sql/Statement;",
+                            "createStatement")
+      # executeQuery forces a ResultSet; next() forces materialization / error delivery
+      rs <- rJava::.jcall(stmt,
+                          "Ljava/sql/ResultSet;",
+                          "executeQuery",
+                          probeSql)
 
-      # use the SAME connection; querySql should be synchronous on success
-      #DatabaseConnector::querySql(connection, probeSql)
+      # if the query succeeds, rs.next() should return TRUE/FALSE but not throw
+      rJava::.jcall(rs, "Z", "next")
+
+      # close result + statement explicitly (no on.exit accumulation)
+      rJava::.jcall(rs, "V", "close")
+      rJava::.jcall(stmt, "V", "close")
+
       TRUE
     }, error = function(e) {
-      msg <- conditionMessage(e)
-      msg_l <- tolower(msg)
+      msg_l <- tolower(conditionMessage(e))
 
       is_not_found <- grepl("validation error:", msg_l, fixed = TRUE) &&
         grepl("object", msg_l, fixed = TRUE) &&
