@@ -120,47 +120,69 @@ extractCreatedTableFromCtas <- function(sql) {
 }
 
 # Poll until the created table is queryable (Dremio-only)
-waitForDremioTableVisible_JDBC <- function(connection, tableIdent,
-                                           timeout_secs = 60,
-                                           initial_sleep = 0.3,
-                                           max_sleep = 3) {
+waitForDremioTableVisible <- function(connection, tableIdent,
+                                      timeout_secs = 60,
+                                      initial_sleep = 0.2,
+                                      max_sleep = 2.0,
+                                      debug = FALSE) {
   start <- Sys.time()
   sleep <- initial_sleep
-  probe <- paste0("SELECT 1 FROM ", tableIdent, " LIMIT 1")
-
-  pattern <- "\\bObject\\b\\s+(?:['\"][^'\"]+['\"]|[^\\s]+)\\s+not\\s+found(?:\\s+within\\s+(?:['\"][^'\"]+['\"]|[^\\s]+))?"
+  probeSql <- paste0("SELECT 1 FROM ", tableIdent, " LIMIT 1")
 
   repeat {
     stmt <- NULL
     rs <- NULL
-    ok <- FALSE
     err <- NULL
+    ok <- FALSE
 
+    # 1) Run the probe; capture any error into `err`
     tryCatch({
-      stmt <- rJava::.jcall(connection@jConnection, "Ljava/sql/Statement;", "createStatement")
-      rs <- rJava::.jcall(stmt, "Ljava/sql/ResultSet;", "executeQuery", probe)
-      rJava::.jcall(rs, "Z", "next")  # forces error delivery
+      stmt <- rJava::.jcall(connection@jConnection,
+                            "Ljava/sql/Statement;",
+                            "createStatement")
+
+      rs <- rJava::.jcall(stmt,
+                          "Ljava/sql/ResultSet;",
+                          "executeQuery",
+                          probeSql)
+
+      # force evaluation
+      rJava::.jcall(rs, "Z", "next")
+
       ok <- TRUE
     }, error = function(e) {
       err <<- e
     })
 
-    # close deterministically, swallow close errors
-    if (!is.null(rs))  tryCatch(rJava::.jcall(rs,  "V", "close"), error=function(e) NULL)
-    if (!is.null(stmt)) tryCatch(rJava::.jcall(stmt, "V", "close"), error=function(e) NULL)
+    # 2) Always close safely (errors on close must NOT escape)
+    if (!is.null(rs))  tryCatch(rJava::.jcall(rs,  "V", "close"), error = function(e) NULL)
+    if (!is.null(stmt)) tryCatch(rJava::.jcall(stmt, "V", "close"), error = function(e) NULL)
 
+    # 3) Success
     if (ok) return(invisible(TRUE))
 
-    msg_l <- tolower(conditionMessage(err))
+    # 4) Classify error
+    msg <- if (!is.null(err)) conditionMessage(err) else ""
+    msg_l <- tolower(msg)
 
-    if (grepl("object", msg_l, fixed=TRUE) && grepl("not found", msg_l, fixed=TRUE)) {
-      # transient: table not visible yet
-    } else {
+    # VERY robust: don’t overfit; Dremio uses a few variants
+    is_not_found <- grepl("object", msg_l, fixed = TRUE) && grepl("not found", msg_l, fixed = TRUE)
+
+    cat(sprintf("[probe] ok=%s is_not_found=%s sleep=%.2fs\n", ok, is_not_found, sleep))
+    if (!ok) cat("[probe] tableIdent=", tableIdent, "\n")
+      cat("\n[waitForDremioTableVisible] probe failed\n")
+      cat("SQL: ", probeSql, "\n", sep = "")
+      cat("MSG: ", msg, "\n", sep = "")
+      cat("is_not_found=", is_not_found, "\n")
+
+    if (!is_not_found) {
+      # Not our expected transient condition -> fail loudly with original error
       stop(err)
     }
 
-    if (as.numeric(difftime(Sys.time(), start, units="secs")) > timeout_secs) {
-      stop("Timeout waiting for Dremio CTAS table: ", tableIdent)
+    # 5) Retry until timeout
+    if (as.numeric(difftime(Sys.time(), start, units = "secs")) >= timeout_secs) {
+      stop(sprintf("Dremio CTAS table not visible after %ss: %s", timeout_secs, tableIdent))
     }
 
     Sys.sleep(sleep)
@@ -252,7 +274,7 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
   if (isDremioCtas(sql)) {
     created <- extractCreatedTableFromCtas(sql)
     if (!is.na(created)) {
-      waitForDremioTableVisible_JDBC(connection, created, timeout_secs = 60)
+      waitForDremioTableVisible(connection, created, timeout_secs = 60)
     }
   }
   log_msg("SQL vollständig abgeschlossen.")
