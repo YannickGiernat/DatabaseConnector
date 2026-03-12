@@ -124,35 +124,42 @@ waitForDremioTableVisible_JDBC <- function(connection, tableIdent,
                                            timeout_secs = 60,
                                            initial_sleep = 0.3,
                                            max_sleep = 3) {
-
   start <- Sys.time()
   sleep <- initial_sleep
-
   probe <- paste0("SELECT 1 FROM ", tableIdent, " LIMIT 1")
 
+  pattern <- "\\bObject\\b\\s+(?:['\"][^'\"]+['\"]|[^\\s]+)\\s+not\\s+found(?:\\s+within\\s+(?:['\"][^'\"]+['\"]|[^\\s]+))?"
+
   repeat {
+    stmt <- NULL
+    rs <- NULL
+    ok <- FALSE
+    err <- NULL
 
-    stmt <- rJava::.jcall(connection@jConnection,
-                          "Ljava/sql/Statement;", "createStatement")
-    on.exit(rJava::.jcall(stmt, "V", "close"), add = TRUE)
-
-    ok <- tryCatch({
-      rJava::.jcall(stmt, "Z", "execute", probe, check = TRUE)
-      TRUE
+    tryCatch({
+      stmt <- rJava::.jcall(connection@jConnection, "Ljava/sql/Statement;", "createStatement")
+      rs <- rJava::.jcall(stmt, "Ljava/sql/ResultSet;", "executeQuery", probe)
+      rJava::.jcall(rs, "Z", "next")  # forces error delivery
+      ok <- TRUE
     }, error = function(e) {
-      msg <- conditionMessage(e)
-
-      # Recognize Dremio object-not-found
-      if (grepl("(?is)\\bObject\\b\\s+(?:['\"][^'\"]+['\"]|[^\\s]+)\\s+not\\s+found(?:\\s+within\\s+(?:['\"][^'\"]+['\"]|[^\\s]+))?", msg, perl = TRUE)) {
-        return(FALSE)
-      }
-
-      stop(e)
+      err <<- e
     })
+
+    # close deterministically, swallow close errors
+    if (!is.null(rs))  tryCatch(rJava::.jcall(rs,  "V", "close"), error=function(e) NULL)
+    if (!is.null(stmt)) tryCatch(rJava::.jcall(stmt, "V", "close"), error=function(e) NULL)
 
     if (ok) return(invisible(TRUE))
 
-    if (difftime(Sys.time(), start, units="secs") > timeout_secs) {
+    msg <- conditionMessage(err)
+
+    if (grepl(pattern, msg, perl=TRUE, ignore.case=TRUE)) {
+      # transient: table not visible yet
+    } else {
+      stop(err)
+    }
+
+    if (as.numeric(difftime(Sys.time(), start, units="secs")) > timeout_secs) {
       stop("Timeout waiting for Dremio CTAS table: ", tableIdent)
     }
 
