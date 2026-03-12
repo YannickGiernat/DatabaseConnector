@@ -160,65 +160,106 @@ quoteDremioIdentifierParts <- function(ident) {
   paste(parts, collapse = ".")
 }
 
-# Poll until the created table is queryable (Dremio-only)
+# Parse a fully-qualified Dremio identifier into catalog / schema / table components.
+# Input examples:
+#   "storagegrid"."dremio-ohdsi-connector"."Synthea27NjParquet"."myTable"
+#   "storagegrid"."dremio-ohdsi-connector"."Synthea27NjParquet".myTable
+# Returns a named list: catalog, schema (unquoted raw string or jnull), table
+parseDremioIdentifier <- function(ident) {
+  # Tokenise on dots outside double-quoted segments (same logic as quoteDremioIdentifierParts)
+  parts <- character(0)
+  current <- ""
+  in_quote <- FALSE
+  for (ch in strsplit(ident, "")[[1]]) {
+    if (ch == '"') {
+      in_quote <- !in_quote
+      current <- paste0(current, ch)
+    } else if (ch == '.' && !in_quote) {
+      parts <- c(parts, current)
+      current <- ""
+    } else {
+      current <- paste0(current, ch)
+    }
+  }
+  parts <- c(parts, current)
+
+  # Strip surrounding double-quotes from each part
+  unquote <- function(s) {
+    if (nchar(s) >= 2 && substr(s, 1, 1) == '"' && substr(s, nchar(s), nchar(s)) == '"') {
+      s <- substr(s, 2, nchar(s) - 1)
+      s <- gsub('""', '"', s, fixed = TRUE)
+    }
+    s
+  }
+  parts <- vapply(parts, unquote, character(1), USE.NAMES = FALSE)
+
+  n <- length(parts)
+  if (n < 2) stop(sprintf("Cannot parse Dremio identifier into catalog/schema/table: %s", ident))
+
+  list(
+    catalog = parts[1],
+    # Middle parts joined — getTables schema arg corresponds to Dremio path segments after catalog
+    schema  = if (n > 2) paste(parts[2:(n - 1)], collapse = ".") else rJava::.jnull("java/lang/String"),
+    table   = parts[n]
+  )
+}
+
+# Poll until a CTAS-created Dremio table appears via JDBC DatabaseMetaData.getTables().
+# This is a pure catalog lookup — NO SQL is sent to Dremio, NO Calcite query planner
+# or validator is involved.  This avoids the "Object not found" validation error that
+# a SELECT-based probe triggers while Dremio's metadata cache is still propagating.
 waitForDremioTableVisible <- function(connection, tableIdent,
                                       timeout_secs = 60,
                                       initial_sleep = 0.2,
-                                      max_sleep = 2.0,
-                                      debug = FALSE) {
+                                      max_sleep = 2.0) {
+  parsed <- tryCatch(
+    parseDremioIdentifier(tableIdent),
+    error = function(e) {
+      warning(sprintf(
+        "[waitForDremioTableVisible] Cannot parse identifier '%s': %s — skipping poll",
+        tableIdent, conditionMessage(e)))
+      return(NULL)
+    }
+  )
+  if (is.null(parsed)) return(invisible(FALSE))
+
+  catalog   <- parsed$catalog
+  schema    <- parsed$schema
+  tableName <- parsed$table
+
+  # JDBC getTables() treats schema/table args as regex patterns — escape special chars
+  escapeJdbcPattern <- function(s) gsub("([.\\^$*+?{}\\[\\]|()])", "\\\\\\1", s)
+  schemaPattern <- if (is.character(schema)) escapeJdbcPattern(schema) else rJava::.jnull("java/lang/String")
+  tablePattern  <- escapeJdbcPattern(tableName)
+
+  types    <- rJava::.jarray(c("TABLE", "VIEW", "EXTERNAL TABLE"))
+  metaData <- rJava::.jcall(connection@jConnection, "Ljava/sql/DatabaseMetaData;", "getMetaData")
+
   start <- Sys.time()
   sleep <- initial_sleep
-  probeSql <- paste0("SELECT 1 FROM ", tableIdent, " LIMIT 1")
 
   repeat {
-    stmt <- NULL
-    rs <- NULL
-    err <- NULL
-    ok <- FALSE
-
-    # 1) Run the probe; capture any error into `err`
-    tryCatch({
-      stmt <- rJava::.jcall(connection@jConnection,
-                            "Ljava/sql/Statement;",
-                            "createStatement")
-
-      rs <- rJava::.jcall(stmt,
-                          "Ljava/sql/ResultSet;",
-                          "executeQuery",
-                          probeSql)
-
-      # force evaluation
-      rJava::.jcall(rs, "Z", "next")
-
-      ok <- TRUE
+    found <- tryCatch({
+      rs <- rJava::.jcall(metaData, "Ljava/sql/ResultSet;", "getTables",
+                          catalog, schemaPattern, tablePattern, types,
+                          check = FALSE)
+      hasRow <- !rJava::is.jnull(rs) && rJava::.jcall(rs, "Z", "next")
+      tryCatch(rJava::.jcall(rs, "V", "close"), error = function(e) NULL)
+      hasRow
     }, error = function(e) {
-      err <<- e
+      warning(sprintf("[waitForDremioTableVisible] getTables() error: %s", conditionMessage(e)))
+      FALSE
     })
 
-    # 2) Always close safely (errors on close must NOT escape)
-    if (!is.null(rs))  tryCatch(rJava::.jcall(rs,  "V", "close"), error = function(e) NULL)
-    if (!is.null(stmt)) tryCatch(rJava::.jcall(stmt, "V", "close"), error = function(e) NULL)
+    if (found) return(invisible(TRUE))
 
-    # 3) Success
-    if (ok) return(invisible(TRUE))
-
-    # 4) Classify error
-    msg <- if (!is.null(err)) conditionMessage(err) else ""
-    msg_l <- tolower(msg)
-
-    # VERY robust: don’t overfit; Dremio uses a few variants
-    is_not_found <- grepl("object", msg_l, fixed = TRUE) && grepl("not found", msg_l, fixed = TRUE)
-
-    cat(sprintf("[probe] ok=%s is_not_found=%s sleep=%.2fs\n", ok, is_not_found, sleep))
-
-    if (!is_not_found) {
-      # Not our expected transient condition -> fail loudly with original error
-      stop(err)
-    }
-
-    # 5) Retry until timeout
-    if (as.numeric(difftime(Sys.time(), start, units = "secs")) >= timeout_secs) {
-      stop(sprintf("Dremio CTAS table not visible after %ss: %s", timeout_secs, tableIdent))
+    elapsed <- as.numeric(difftime(Sys.time(), start, units = "secs"))
+    if (elapsed >= timeout_secs) {
+      stop(sprintf(
+        "Dremio CTAS table '%s' not visible in catalog after %.0fs (catalog='%s', schema='%s')",
+        tableName, timeout_secs, catalog,
+        if (is.character(schema)) schema else "<null>"
+      ))
     }
 
     Sys.sleep(sleep)
