@@ -151,9 +151,9 @@ waitForDremioTableVisible_JDBC <- function(connection, tableIdent,
 
     if (ok) return(invisible(TRUE))
 
-    msg <- conditionMessage(err)
+    msg_l <- tolower(conditionMessage(err))
 
-    if (grepl(pattern, msg, perl=TRUE, ignore.case=TRUE)) {
+    if (grepl("object", msg_l, fixed=TRUE) && grepl("not found", msg_l, fixed=TRUE)) {
       # transient: table not visible yet
     } else {
       stop(err)
