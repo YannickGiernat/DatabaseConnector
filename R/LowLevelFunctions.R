@@ -333,8 +333,16 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
       if (hasResult) {
         resultSet <- rJava::.jcall(statement, "Ljava/sql/ResultSet;", "getResultSet", check = FALSE)
         if (!rJava::is.jnull(resultSet)) {
-          log_msg("  ResultSet #", step, " vorhanden → wird geschlossen")
-          sanitizeJavaErrorForRlang(rJava::.jcall(resultSet, "V", "close", check = FALSE))
+          # IMPORTANT: fully drain the ResultSet before closing.
+          # For Dremio CTAS the ResultSet is the async job-completion stream.
+          # Calling close() immediately (without consuming rows) cancels the job
+          # before Dremio has committed the created table — the table then never
+          # appears in the catalog.  Reading until next() returns FALSE ensures
+          # the JDBC driver waits for the Dremio job to finish.
+          log_msg("  ResultSet #", step, " vorhanden → wird vollständig gelesen …")
+          while (rJava::.jcall(resultSet, "Z", "next", check = FALSE)) {}
+          log_msg("  ResultSet #", step, " vollständig gelesen → wird geschlossen")
+          tryCatch(rJava::.jcall(resultSet, "V", "close", check = FALSE), error = function(e) NULL)
         } else {
           log_msg("  ResultSet #", step, " = <NULL>")
         }
