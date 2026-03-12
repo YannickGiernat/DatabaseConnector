@@ -105,6 +105,57 @@ delayIfNecessaryForInsert <- function(sql) {
 # See https://github.com/tidyverse/dbplyr/issues/1186 and https://github.com/r-lib/rlang/issues/1619 for details
 sanitizeJavaErrorForRlang <- function(expr) { tryCatch(expr, error = function(cnd) stop(conditionMessage(cnd))) }
 
+# Detect CTAS and extract created table identifier
+isDremioCtas <- function(sql) {
+  grepl("^\\s*CREATE\\s+TABLE\\s+.*\\s+AS\\b", sql, ignore.case = TRUE, perl = TRUE)
+}
+
+extractCreatedTableFromCtas <- function(sql) {
+  # Captures the identifier after CREATE TABLE up to the next whitespace/newline
+  # Works with fully-qualified quoted identifiers.
+  m <- regexec("(?is)^\\s*CREATE\\s+TABLE\\s+([^\\s]+)\\s+AS\\b", sql, perl = TRUE)
+  mm <- regmatches(sql, m)[[1]]
+  if (length(mm) >= 2) return(mm[2])
+  return(NA_character_)
+}
+
+# Poll until the created table is queryable (Dremio-only)
+waitForDremioTableVisible <- function(connection, tableIdent,
+                                       timeout_secs = 60,
+                                       initial_sleep = 0.2,
+                                       max_sleep = 2.0) {
+  start <- Sys.time()
+  sleep <- initial_sleep
+
+  probeSql <- paste0("SELECT 1 FROM ", tableIdent, " LIMIT 1")
+
+  repeat {
+    ok <- tryCatch({
+      # use the SAME connection; querySql should be synchronous on success
+      DatabaseConnector::querySql(connection, probeSql)
+      TRUE
+    }, error = function(e) {
+      msg <- conditionMessage(e)
+      # Narrow match: only retry on Dremio "Object ... not found within ..."
+      if (grepl("Object\\s+'.+'\\s+not\\s+found\\s+within", msg, ignore.case = TRUE, perl = TRUE)) {
+        FALSE
+      } else {
+        stop(e)
+      }
+    })
+
+    if (ok) return(invisible(TRUE))
+
+    if (as.numeric(difftime(Sys.time(), start, units = "secs")) >= timeout_secs) {
+      stop(sprintf("Dremio CTAS table not visible after %ss: %s", timeout_secs, tableIdent))
+    }
+
+    Sys.sleep(sleep)
+    sleep <- min(max_sleep, sleep * 1.7)
+  }
+}
+
+
 lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
 
   log_msg <- function(...) {
@@ -173,22 +224,13 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
     # -------------------------------------------------------------------------
     # 2) Barrier‑Query
     # -------------------------------------------------------------------------
-    log_msg("Starte Barrier‑Query (SELECT 1), um Dremio‑Job synchron abzuschließen …")
 
-    barrierStmt <- rJava::.jcall(connection@jConnection, "Ljava/sql/Statement;", "createStatement")
-    on.exit(rJava::.jcall(barrierStmt, "V", "close"), add = TRUE)
-
-    sanitizeJavaErrorForRlang(
-      rJava::.jcall(barrierStmt, "Z", "execute", "SELECT 1", check = FALSE)
-    )
-
-    resultSet <- rJava::.jcall(barrierStmt, "Ljava/sql/ResultSet;", "getResultSet", check = FALSE)
-    if (!rJava::is.jnull(resultSet)) {
-      sanitizeJavaErrorForRlang(rJava::.jcall(resultSet, "V", "close", check = FALSE))
+    if (isDremioCtas(sql)) {
+      created <- extractCreatedTableFromCtas(sql)
+      if (!is.na(created)) {
+        waitForDremioTableVisible(connection, created, timeout_secs = 60)
+      }
     }
-
-    log_msg("Barrier erfolgreich → Statement garantiert abgeschlossen.")
-    log_msg("Rows affected gesamt: ", rowsAffected)
 
   } else {
 
