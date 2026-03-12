@@ -120,69 +120,40 @@ extractCreatedTableFromCtas <- function(sql) {
 }
 
 # Poll until the created table is queryable (Dremio-only)
-waitForDremioTableVisible <- function(connection, tableIdent,
-                                      timeout_secs = 60,
-                                      initial_sleep = 0.2,
-                                      max_sleep = 2.0,
-                                      debug = FALSE) {
+waitForDremioTableVisible_JDBC <- function(connection, tableIdent,
+                                           timeout_secs = 60,
+                                           initial_sleep = 0.3,
+                                           max_sleep = 3) {
+
   start <- Sys.time()
   sleep <- initial_sleep
-  probeSql <- paste0("SELECT 1 FROM ", tableIdent, " LIMIT 1")
+
+  probe <- paste0("SELECT 1 FROM ", tableIdent, " LIMIT 1")
 
   repeat {
-    stmt <- NULL
-    rs <- NULL
-    err <- NULL
-    ok <- FALSE
 
-    # 1) Run the probe; capture any error into `err`
-    tryCatch({
-      stmt <- rJava::.jcall(connection@jConnection,
-                            "Ljava/sql/Statement;",
-                            "createStatement")
+    stmt <- rJava::.jcall(connection@jConnection,
+                          "Ljava/sql/Statement;", "createStatement")
+    on.exit(rJava::.jcall(stmt, "V", "close"), add = TRUE)
 
-      rs <- rJava::.jcall(stmt,
-                          "Ljava/sql/ResultSet;",
-                          "executeQuery",
-                          probeSql)
-
-      # force evaluation
-      rJava::.jcall(rs, "Z", "next")
-
-      ok <- TRUE
+    ok <- tryCatch({
+      rJava::.jcall(stmt, "Z", "execute", probe, check = TRUE)
+      TRUE
     }, error = function(e) {
-      err <<- e
+      msg <- conditionMessage(e)
+
+      # Recognize Dremio object-not-found
+      if (grepl("(?is)Object\\s+['\"][^'\"]+['\"]\\s+not\\s+found", msg)) {
+        return(FALSE)
+      }
+
+      stop(e)
     })
 
-    # 2) Always close safely (errors on close must NOT escape)
-    if (!is.null(rs))  tryCatch(rJava::.jcall(rs,  "V", "close"), error = function(e) NULL)
-    if (!is.null(stmt)) tryCatch(rJava::.jcall(stmt, "V", "close"), error = function(e) NULL)
-
-    # 3) Success
     if (ok) return(invisible(TRUE))
 
-    # 4) Classify error
-    msg <- if (!is.null(err)) conditionMessage(err) else ""
-    msg_l <- tolower(msg)
-
-    # VERY robust: don’t overfit; Dremio uses a few variants
-    is_not_found <- grepl("object", msg_l, fixed = TRUE) && grepl("not found", msg_l, fixed = TRUE)
-
-    cat(sprintf("[probe] ok=%s is_not_found=%s sleep=%.2fs\n", ok, is_not_found, sleep))
-    if (!ok) cat("[probe] tableIdent=", tableIdent, "\n")
-      cat("\n[waitForDremioTableVisible] probe failed\n")
-      cat("SQL: ", probeSql, "\n", sep = "")
-      cat("MSG: ", msg, "\n", sep = "")
-      cat("is_not_found=", is_not_found, "\n")
-
-    if (!is_not_found) {
-      # Not our expected transient condition -> fail loudly with original error
-      stop(err)
-    }
-
-    # 5) Retry until timeout
-    if (as.numeric(difftime(Sys.time(), start, units = "secs")) >= timeout_secs) {
-      stop(sprintf("Dremio CTAS table not visible after %ss: %s", timeout_secs, tableIdent))
+    if (difftime(Sys.time(), start, units="secs") > timeout_secs) {
+      stop("Timeout waiting for Dremio CTAS table: ", tableIdent)
     }
 
     Sys.sleep(sleep)
@@ -255,12 +226,6 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
 
       step <- step + 1
     }
-
-    # -------------------------------------------------------------------------
-    # 2) Barrier‑Query
-    # -------------------------------------------------------------------------
-
-
 
   } else {
 
