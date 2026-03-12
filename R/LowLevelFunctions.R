@@ -107,16 +107,57 @@ sanitizeJavaErrorForRlang <- function(expr) { tryCatch(expr, error = function(cn
 
 # Detect CTAS and extract created table identifier
 isDremioCtas <- function(sql) {
-  grepl("^\\s*CREATE\\s+TABLE\\s+.*\\s+AS\\b", sql, ignore.case = TRUE, perl = TRUE)
+  # Use (?s) so that .* spans newlines — AS may be on a separate line
+  grepl("(?is)^\\s*CREATE\\s+TABLE\\s+.+\\s+AS\\b", sql, perl = TRUE)
 }
 
 extractCreatedTableFromCtas <- function(sql) {
-  # Captures the identifier after CREATE TABLE up to the next whitespace/newline
-  # Works with fully-qualified quoted identifiers.
-  m <- regexec("(?is)^\\s*CREATE\\s+TABLE\\s+([^\\s]+)\\s+AS\\b", sql, perl = TRUE)
+  # Match CREATE TABLE <ident> AS where ident may be followed by whitespace OR a newline.
+  # (?s) makes . match newlines so the overall pattern works on multi-line SQL.
+  # The identifier itself is captured as everything up to the first whitespace character
+  # (spaces, tabs, newlines) that precedes the AS keyword.
+  m <- regexec("(?is)CREATE\\s+TABLE\\s+([^\\s]+)\\s+AS\\b", sql, perl = TRUE)
   mm <- regmatches(sql, m)[[1]]
-  if (length(mm) >= 2) return(mm[2])
+  if (length(mm) >= 2) {
+    ident <- mm[2]
+    # Dremio requires every name-part to be double-quoted.
+    # The table name suffix (after the last dot) may arrive unquoted from SqlRender;
+    # ensure it is quoted so the probe SQL is valid.
+    ident <- quoteDremioIdentifierParts(ident)
+    return(ident)
+  }
   return(NA_character_)
+}
+
+# Ensure every dot-separated part of a Dremio identifier is double-quoted.
+# Parts that are already quoted (start with ") are left untouched.
+# Example: "a"."b-c"."Schema".myTable  ->  "a"."b-c"."Schema"."myTable"
+quoteDremioIdentifierParts <- function(ident) {
+  # Split on dots that are NOT inside double-quoted segments.
+  # Strategy: tokenise manually – iterate character by character.
+  parts <- character(0)
+  current <- ""
+  in_quote <- FALSE
+  for (ch in strsplit(ident, "")[[1]]) {
+    if (ch == '"') {
+      in_quote <- !in_quote
+      current <- paste0(current, ch)
+    } else if (ch == '.' && !in_quote) {
+      parts <- c(parts, current)
+      current <- ""
+    } else {
+      current <- paste0(current, ch)
+    }
+  }
+  parts <- c(parts, current)
+
+  # Quote any part that is not already surrounded by double-quotes
+  parts <- vapply(parts, function(p) {
+    if (nchar(p) > 0 && substr(p, 1, 1) == '"') p
+    else paste0('"', gsub('"', '""', p, fixed = TRUE), '"')
+  }, character(1), USE.NAMES = FALSE)
+
+  paste(parts, collapse = ".")
 }
 
 # Poll until the created table is queryable (Dremio-only)
