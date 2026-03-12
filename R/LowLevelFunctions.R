@@ -260,12 +260,12 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
     # 2) Barrier‑Query
     # -------------------------------------------------------------------------
 
-    if (isDremioCtas(sql)) {
-      created <- extractCreatedTableFromCtas(sql)
-      if (!is.na(created)) {
-        waitForDremioTableVisible(connection, created, timeout_secs = 60)
-      }
-    }
+    #if (isDremioCtas(sql)) {
+    #  created <- extractCreatedTableFromCtas(sql)
+    #  if (!is.na(created)) {
+    #    waitForDremioTableVisible(connection, created, timeout_secs = 60)
+    #  }
+    #}
 
   } else {
 
