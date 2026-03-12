@@ -117,6 +117,26 @@ lowLevelExecuteSql <- function(connection, sql) {
     if (rowsAffected == -1) {
       rowsAffected <- 0
     }
+  } else if (dbms(connection) == "dremio") {
+    # Dremio may complete CTAS work through JDBC result/update chains.
+    # Drain all statement results before returning so dependent statements can run immediately after.
+    hasResult <- sanitizeJavaErrorForRlang(rJava::.jcall(statement, "Z", "execute", as.character(sql), check = FALSE))
+    rowsAffected <- 0
+    repeat {
+      if (hasResult) {
+        resultSet <- rJava::.jcall(statement, "Ljava/sql/ResultSet;", "getResultSet", check = FALSE)
+        if (!rJava::is.jnull(resultSet)) {
+          sanitizeJavaErrorForRlang(rJava::.jcall(resultSet, "V", "close", check = FALSE))
+        }
+      } else {
+        updateCount <- rJava::.jcall(statement, "I", "getUpdateCount", check = FALSE)
+        if (updateCount == -1L) {
+          break
+        }
+        rowsAffected <- rowsAffected + updateCount
+      }
+      hasResult <- sanitizeJavaErrorForRlang(rJava::.jcall(statement, "Z", "getMoreResults", check = FALSE))
+    }
   } else {
     rowsAffected <- sanitizeJavaErrorForRlang(rJava::.jcall(statement, "J", "executeLargeUpdate", as.character(sql), check = FALSE))
   }

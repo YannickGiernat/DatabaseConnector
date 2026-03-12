@@ -164,7 +164,9 @@ executeSql <- function(connection,
     on.exit(trySettingAutoCommit(connection, TRUE))
   }
   
-  batched <- runAsBatch && supportsBatchUpdates(connection)
+  # Dremio CTAS chains are order-dependent; avoid JDBC batch mode so statements
+  # are executed and completed one-by-one.
+  batched <- runAsBatch && supportsBatchUpdates(connection) && dbms != "dremio"
   sqlStatements <- SqlRender::splitSql(sql)
   rowsAffected <- c()
   if (batched) {
