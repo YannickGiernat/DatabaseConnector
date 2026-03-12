@@ -105,47 +105,109 @@ delayIfNecessaryForInsert <- function(sql) {
 # See https://github.com/tidyverse/dbplyr/issues/1186 and https://github.com/r-lib/rlang/issues/1619 for details
 sanitizeJavaErrorForRlang <- function(expr) { tryCatch(expr, error = function(cnd) stop(conditionMessage(cnd))) }
 
-lowLevelExecuteSql <- function(connection, sql) {
+lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
+
+  log_msg <- function(...) {
+    if (verbose) message("[lowLevelExecuteSql] ", ...)
+  }
+
+  log_msg("Starte SQL: ", sql)
+
   statement <- rJava::.jcall(connection@jConnection, "Ljava/sql/Statement;", "createStatement")
   on.exit(sanitizeJavaErrorForRlang(rJava::.jcall(statement, "V", "close")))
-  if ((dbms(connection) == "spark") || (dbms(connection) == "iris")) {
-    # For some queries the DataBricks JDBC driver will throw an error saying no ROWCOUNT is returned
-    # when using executeLargeUpdate, so using execute instead.
-    # Also use this approach for IRIS JDBC driver, which does not support executeLargeUpdate() directly.
+
+  db <- dbms(connection)
+
+  if ((db == "spark") || (db == "iris")) {
+
+    log_msg("DBMS = ", db, " → execute() anstelle von executeLargeUpdate()")
     sanitizeJavaErrorForRlang(rJava::.jcall(statement, "Z", "execute", as.character(sql), check = FALSE))
+
     rowsAffected <- rJava::.jcall(statement, "I", "getUpdateCount", check = FALSE)
-    if (rowsAffected == -1) {
-      rowsAffected <- 0
-    }
-  } else if (dbms(connection) == "dremio") {
-    # Dremio may complete CTAS work through JDBC result/update chains.
-    # Drain all statement results before returning so dependent statements can run immediately after.
-    hasResult <- sanitizeJavaErrorForRlang(rJava::.jcall(statement, "Z", "execute", as.character(sql), check = FALSE))
+    if (rowsAffected == -1) rowsAffected <- 0
+
+    log_msg("Rows affected: ", rowsAffected)
+
+  } else if (db == "dremio") {
+
+    log_msg("DBMS = dremio → starte erweiterten Sync‑Pfad …")
+
+    # -------------------------------------------------------------------------
+    # 1) Hauptausführung
+    # -------------------------------------------------------------------------
+    hasResult <- sanitizeJavaErrorForRlang(
+      rJava::.jcall(statement, "Z", "execute", as.character(sql), check = FALSE)
+    )
+
+    log_msg("Statement ausgeführt, beginne Drainen der JDBC‑ResultChains …")
+
     rowsAffected <- 0
+    step <- 1
+
     repeat {
       if (hasResult) {
         resultSet <- rJava::.jcall(statement, "Ljava/sql/ResultSet;", "getResultSet", check = FALSE)
         if (!rJava::is.jnull(resultSet)) {
+          log_msg("  ResultSet #", step, " vorhanden → wird geschlossen")
           sanitizeJavaErrorForRlang(rJava::.jcall(resultSet, "V", "close", check = FALSE))
+        } else {
+          log_msg("  ResultSet #", step, " = <NULL>")
         }
       } else {
         updateCount <- rJava::.jcall(statement, "I", "getUpdateCount", check = FALSE)
         if (updateCount == -1L) {
+          log_msg("  UpdateChain endet nach ", step-1, " Iterationen.")
           break
         }
         rowsAffected <- rowsAffected + updateCount
+        log_msg("  UpdateCount #", step, ": ", updateCount, " (Summe: ", rowsAffected, ")")
       }
-      hasResult <- sanitizeJavaErrorForRlang(rJava::.jcall(statement, "Z", "getMoreResults", check = FALSE))
+
+      hasResult <- sanitizeJavaErrorForRlang(
+        rJava::.jcall(statement, "Z", "getMoreResults", check = FALSE)
+      )
+
+      step <- step + 1
     }
+
+    # -------------------------------------------------------------------------
+    # 2) Barrier‑Query
+    # -------------------------------------------------------------------------
+    log_msg("Starte Barrier‑Query (SELECT 1), um Dremio‑Job synchron abzuschließen …")
+
+    barrierStmt <- rJava::.jcall(connection@jConnection, "Ljava/sql/Statement;", "createStatement")
+    on.exit(rJava::.jcall(barrierStmt, "V", "close"), add = TRUE)
+
+    sanitizeJavaErrorForRlang(
+      rJava::.jcall(barrierStmt, "Z", "execute", "SELECT 1", check = FALSE)
+    )
+
+    resultSet <- rJava::.jcall(barrierStmt, "Ljava/sql/ResultSet;", "getResultSet", check = FALSE)
+    if (!rJava::is.jnull(resultSet)) {
+      sanitizeJavaErrorForRlang(rJava::.jcall(resultSet, "V", "close", check = FALSE))
+    }
+
+    log_msg("Barrier erfolgreich → Statement garantiert abgeschlossen.")
+    log_msg("Rows affected gesamt: ", rowsAffected)
+
   } else {
-    rowsAffected <- sanitizeJavaErrorForRlang(rJava::.jcall(statement, "J", "executeLargeUpdate", as.character(sql), check = FALSE))
+
+    log_msg("DBMS = ", db, " → Standard executeLargeUpdate()")
+
+    rowsAffected <- sanitizeJavaErrorForRlang(
+      rJava::.jcall(statement, "J", "executeLargeUpdate", as.character(sql), check = FALSE)
+    )
+
+    log_msg("Rows affected: ", rowsAffected)
   }
-  
-  if (dbms(connection) == "bigquery") {
+
+  if (db == "bigquery") {
     delayIfNecessaryForDdl(sql)
     delayIfNecessaryForInsert(sql)
   }
-  
+
+  log_msg("SQL vollständig abgeschlossen.")
+
   invisible(rowsAffected)
 }
 
