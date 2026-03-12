@@ -204,10 +204,16 @@ parseDremioIdentifier <- function(ident) {
   )
 }
 
-# Poll until a CTAS-created Dremio table appears via JDBC DatabaseMetaData.getTables().
-# This is a pure catalog lookup — NO SQL is sent to Dremio, NO Calcite query planner
-# or validator is involved.  This avoids the "Object not found" validation error that
-# a SELECT-based probe triggers while Dremio's metadata cache is still propagating.
+# Poll until a CTAS-created Dremio table appears in INFORMATION_SCHEMA.TABLES.
+#
+# Why INFORMATION_SCHEMA and not DatabaseMetaData.getTables() or SELECT 1:
+#   - SELECT 1 FROM <table>: goes through the Calcite query planner which validates
+#     the FROM-clause object — fails with "Object not found" while cache propagates.
+#   - DatabaseMetaData.getTables(): internally issues a broad namespace scan in
+#     the Dremio JDBC driver; extremely slow and unreliable for deep schema paths.
+#   - INFORMATION_SCHEMA."TABLES" with exact WHERE predicates: metadata-only query,
+#     no physical scan, no Calcite validation of the target table itself, fast and
+#     deterministic.  Dremio explicitly supports this pattern.
 waitForDremioTableVisible <- function(connection, tableIdent,
                                       timeout_secs = 60,
                                       initial_sleep = 0.2,
@@ -224,30 +230,44 @@ waitForDremioTableVisible <- function(connection, tableIdent,
   if (is.null(parsed)) return(invisible(FALSE))
 
   catalog   <- parsed$catalog
-  schema    <- parsed$schema
-  tableName <- parsed$table
+  schema    <- parsed$schema   # already unquoted plain string
+  tableName <- parsed$table    # already unquoted plain string
 
-  # JDBC getTables() treats schema/table args as regex patterns — escape special chars
-  escapeJdbcPattern <- function(s) gsub("([.\\^$*+?{}\\[\\]|()])", "\\\\\\1", s)
-  schemaPattern <- if (is.character(schema)) escapeJdbcPattern(schema) else rJava::.jnull("java/lang/String")
-  tablePattern  <- escapeJdbcPattern(tableName)
+  # Escape single quotes for SQL string literals (defensive — names rarely contain them)
+  sq <- function(s) gsub("'", "''", s, fixed = TRUE)
 
-  types    <- rJava::.jarray(c("TABLE", "VIEW", "EXTERNAL TABLE"))
-  metaData <- rJava::.jcall(connection@jConnection, "Ljava/sql/DatabaseMetaData;", "getMetaData")
+  # Build exact-match query against INFORMATION_SCHEMA.
+  # TABLE_SCHEMA in Dremio equals the dot-joined path segments *after* the catalog,
+  # e.g. "dremio-ohdsi-connector.Synthea27NjParquet" for a 4-part identifier.
+  if (is.character(schema)) {
+    probeSql <- sprintf(
+      "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.\"TABLES\" WHERE TABLE_CATALOG = '%s' AND TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s'",
+      sq(catalog), sq(schema), sq(tableName)
+    )
+  } else {
+    # 2-part identifier: no schema segment — match on catalog + table only
+    probeSql <- sprintf(
+      "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.\"TABLES\" WHERE TABLE_CATALOG = '%s' AND TABLE_NAME = '%s'",
+      sq(catalog), sq(tableName)
+    )
+  }
 
   start <- Sys.time()
   sleep <- initial_sleep
 
   repeat {
     found <- tryCatch({
-      rs <- rJava::.jcall(metaData, "Ljava/sql/ResultSet;", "getTables",
-                          catalog, schemaPattern, tablePattern, types,
-                          check = FALSE)
+      stmt <- rJava::.jcall(connection@jConnection, "Ljava/sql/Statement;", "createStatement")
+      rs   <- tryCatch(
+        rJava::.jcall(stmt, "Ljava/sql/ResultSet;", "executeQuery", probeSql),
+        error = function(e) { tryCatch(rJava::.jcall(stmt, "V", "close"), error = function(e2) NULL); stop(e) }
+      )
       hasRow <- !rJava::is.jnull(rs) && rJava::.jcall(rs, "Z", "next")
-      tryCatch(rJava::.jcall(rs, "V", "close"), error = function(e) NULL)
+      tryCatch(rJava::.jcall(rs,   "V", "close"), error = function(e) NULL)
+      tryCatch(rJava::.jcall(stmt, "V", "close"), error = function(e) NULL)
       hasRow
     }, error = function(e) {
-      warning(sprintf("[waitForDremioTableVisible] getTables() error: %s", conditionMessage(e)))
+      warning(sprintf("[waitForDremioTableVisible] probe error: %s", conditionMessage(e)))
       FALSE
     })
 
@@ -256,7 +276,7 @@ waitForDremioTableVisible <- function(connection, tableIdent,
     elapsed <- as.numeric(difftime(Sys.time(), start, units = "secs"))
     if (elapsed >= timeout_secs) {
       stop(sprintf(
-        "Dremio CTAS table '%s' not visible in catalog after %.0fs (catalog='%s', schema='%s')",
+        "Dremio CTAS table '%s' not visible in INFORMATION_SCHEMA after %.0fs (catalog='%s', schema='%s')",
         tableName, timeout_secs, catalog,
         if (is.character(schema)) schema else "<null>"
       ))
