@@ -50,66 +50,45 @@ setMethod(
       return(tables)
     }
     
-    # --- Dremio: INFORMATION_SCHEMA query (supports arbitrary nesting depth) ---
+    # --- Dremio: INFORMATION_SCHEMA query ---
     if (dbms(conn) == "dremio") {
-      # Dremio namespace hierarchy: <catalog>.<folder1>...<folderN>.<table>
-      # INFORMATION_SCHEMA.TABLES uses:
-      #   TABLE_CATALOG = first part
-      #   TABLE_SCHEMA  = all middle parts joined with "."
-      # We split char-by-char to correctly handle quoted identifiers containing dots or dashes.
-      # as.character() strips DBI::SQL and other character subclasses so that
-      # character comparisons (ch == '"') and strsplit work reliably.
+      # In Dremio's INFORMATION_SCHEMA the catalog is ALWAYS the fixed string
+      # "DREMIO" (uppercase), regardless of source/space names.
+      # The full namespace path maps entirely to TABLE_SCHEMA, with each
+      # quoted identifier part unquoted and joined by ".":
+      #   '"storagegrid"."dremio-ohdsi-connector"."Synthea27NjParquet"'
+      #   -> TABLE_SCHEMA = 'storagegrid.dremio-ohdsi-connector.Synthea27NjParquet'
+      #
+      # Note: "TABLES" must be double-quoted — Dremio/Calcite treats it as a
+      # reserved keyword and throws a parse error without quotes.
+      #
+      # as.character() strips DBI::SQL and other character subclasses.
       sq <- function(s) gsub("'", "''", s, fixed = TRUE)
       if (!is.null(databaseSchema)) databaseSchema <- as.character(databaseSchema)
 
-      parts <- character(0)
-      current <- ""
-      in_quote <- FALSE
-      if (!is.null(databaseSchema)) {
+      if (is.null(databaseSchema)) {
+        probeSql <- 'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'DREMIO\''
+      } else {
+        # Tokenize char-by-char, strip double-quotes from each part, rejoin with "."
+        parts   <- character(0)
+        current <- ""
+        in_quote <- FALSE
         for (ch in strsplit(databaseSchema, "")[[1]]) {
-          if (ch == '"') {
+          if (identical(ch, '"')) {
             in_quote <- !in_quote
-            current <- paste0(current, ch)
-          } else if (ch == '.' && !in_quote) {
-            parts <- c(parts, current)
+          } else if (identical(ch, '.') && !in_quote) {
+            parts   <- c(parts, current)
             current <- ""
           } else {
             current <- paste0(current, ch)
           }
         }
         parts <- c(parts, current)
-      }
-
-      unquote <- function(s) {
-        if (nchar(s) >= 2 && substr(s, 1, 1) == '"' && substr(s, nchar(s), nchar(s)) == '"') {
-          s <- substr(s, 2, nchar(s) - 1)
-          s <- gsub('""', '"', s, fixed = TRUE)
-        }
-        s
-      }
-      parts <- vapply(parts, unquote, character(1), USE.NAMES = FALSE)
-
-      n <- length(parts)
-
-      # Note: Dremio/Calcite treats TABLES as a reserved keyword.
-      # Double-quotes around "TABLES" are mandatory, otherwise the parser
-      # throws: PARSE ERROR: Encountered ".TABLES" at line 1, column N.
-      if (n == 0) {
-        # No databaseSchema given — return all tables visible to this connection
-        probeSql <- 'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES"'
-      } else if (n == 1) {
-        # Only catalog given — return all tables in that catalog
+        parts <- parts[nzchar(parts)]  # drop empty strings
+        schema_val <- paste(parts, collapse = ".")
         probeSql <- sprintf(
-          'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'%s\'',
-          sq(parts[1])
-        )
-      } else {
-        # First part = catalog, remaining parts = schema
-        # (e.g. "dremio-ohdsi-connector.Synthea27NjParquet")
-        schema_val <- paste(parts[2:n], collapse = ".")
-        probeSql <- sprintf(
-          'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'%s\' AND TABLE_SCHEMA = \'%s\'',
-          sq(parts[1]), sq(schema_val)
+          'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'DREMIO\' AND TABLE_SCHEMA = \'%s\'',
+          sq(schema_val)
         )
       }
 
