@@ -135,6 +135,20 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
 
     log_msg("DBMS = dremio → starte erweiterten Sync‑Pfad …")
 
+    # Dremio signals async job completion via a ResultSet for DDL / CTAS statements.
+    # For DML (INSERT, UPDATE, DELETE, …) no ResultSet is produced and draining is
+    # unnecessary.  We therefore only drain ResultSets when the SQL is a
+    # CREATE TABLE (including CTAS) or DROP TABLE statement.
+    isDdlStatement <- grepl(
+      "^\\s*(CREATE\\s+(OR\\s+REPLACE\\s+)?TABLE|DROP\\s+TABLE)",
+      sql,
+      ignore.case = TRUE,
+      perl = TRUE
+    )
+
+    log_msg(if (isDdlStatement) "DDL/CTAS erkannt → ResultSets werden vollständig gelesen."
+            else "DML erkannt → ResultSets werden übersprungen.")
+
     # -------------------------------------------------------------------------
     # 1) Hauptausführung
     # -------------------------------------------------------------------------
@@ -151,15 +165,19 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
       if (hasResult) {
         resultSet <- rJava::.jcall(statement, "Ljava/sql/ResultSet;", "getResultSet", check = FALSE)
         if (!rJava::is.jnull(resultSet)) {
-          # IMPORTANT: fully drain the ResultSet before closing.
-          # For Dremio CTAS the ResultSet is the async job-completion stream.
-          # Calling close() immediately (without consuming rows) cancels the job
-          # before Dremio has committed the created table — the table then never
-          # appears in the catalog.  Reading until next() returns FALSE ensures
-          # the JDBC driver waits for the Dremio job to finish.
-          log_msg("  ResultSet #", step, " vorhanden → wird vollständig gelesen …")
-          while (rJava::.jcall(resultSet, "Z", "next", check = FALSE)) {}
-          log_msg("  ResultSet #", step, " vollständig gelesen → wird geschlossen")
+          if (isDdlStatement) {
+            # IMPORTANT: fully drain the ResultSet before closing.
+            # For Dremio CTAS the ResultSet is the async job-completion stream.
+            # Calling close() immediately (without consuming rows) cancels the job
+            # before Dremio has committed the created table — the table then never
+            # appears in the catalog.  Reading until next() returns FALSE ensures
+            # the JDBC driver waits for the Dremio job to finish.
+            log_msg("  ResultSet #", step, " vorhanden → wird vollständig gelesen …")
+            while (rJava::.jcall(resultSet, "Z", "next", check = FALSE)) {}
+            log_msg("  ResultSet #", step, " vollständig gelesen → wird geschlossen")
+          } else {
+            log_msg("  ResultSet #", step, " vorhanden, aber kein DDL/CTAS → wird übersprungen")
+          }
           tryCatch(rJava::.jcall(resultSet, "V", "close", check = FALSE), error = function(e) NULL)
         } else {
           log_msg("  ResultSet #", step, " = <NULL>")
