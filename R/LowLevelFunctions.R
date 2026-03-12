@@ -245,7 +245,7 @@ lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
   if (isDremioCtas(sql)) {
     created <- extractCreatedTableFromCtas(sql)
     if (!is.na(created)) {
-      waitForDremioTableVisible(connection, created, timeout_secs = 60)
+      waitForDremioTableVisible_JDBC(connection, created, timeout_secs = 60)
     }
   }
   log_msg("SQL vollständig abgeschlossen.")
