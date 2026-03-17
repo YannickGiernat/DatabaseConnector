@@ -432,3 +432,5 @@ bulkLoadSpark <- function(connection, sqlTableName, data) {
   delta <- Sys.time() - start
   inform(paste("Bulk load to DataBricks took", signif(delta, 3), attr(delta, "units")))
 }
+
+

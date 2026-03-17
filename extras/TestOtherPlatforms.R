@@ -86,6 +86,16 @@ connection <- connect(connectionDetailsSnowflake)
 cdmDatabaseSchemaSnowflake <- "ATLAS.SYNPUF110K_CDM_53"
 scratchDatabaseSchemaSnowflake <- "ATLAS.RESULTS"
 
+# Dremio
+connectionDetailsDremio <- createConnectionDetails(
+  dbms = "dremio",
+  connectionString = keyring::key_get("dremioConnectionString"),
+  user = keyring::key_get("dremioUser"),
+  password = keyring::key_get("dremioPassword")
+)
+cdmDatabaseSchemaDremio <- "eunomia"
+scratchDatabaseSchemaDremio <- "scratch"
+
 # Open and close connection -----------------------------------------------
 
 # BigQuery
@@ -112,6 +122,10 @@ connection <- connect(connectionDetailsSnowflake)
 expect_true(inherits(connection, "DatabaseConnectorConnection"))
 expect_true(disconnect(connection))
 
+# Dremio
+connection <- connect(connectionDetailsDremio)
+expect_true(inherits(connection, "DatabaseConnectorConnection"))
+expect_true(disconnect(connection))
 
 # Fetch results -------------------------------------------------------------
 sql <- "SELECT COUNT(*) AS row_count FROM @cdm_database_schema.vocabulary"
@@ -215,6 +229,24 @@ expect_equivalent(dplyr::collect(andromeda$test2)$rowCount[1], 125)
 
 disconnect(connection)
 
+# Dremio
+connection <- connect(connectionDetailsDremio)
+renderedSql <- SqlRender::render(sql, cdm_database_schema = cdmDatabaseSchemaDremio)
+
+# Fetch data.frame:
+count <- querySql(connection, renderedSql)
+expect_equal(count[1, 1], 125)
+count <- renderTranslateQuerySql(connection, sql, cdm_database_schema = cdmDatabaseSchemaDremio)
+expect_equal(count[1, 1], 125)
+
+# Fetch Andromeda:
+andromeda <- Andromeda::andromeda()
+querySqlToAndromeda(connection, renderedSql, andromeda = andromeda, andromedaTableName = "test", snakeCaseToCamelCase = TRUE)
+expect_equivalent(dplyr::collect(andromeda$test)$rowCount[1], 125)
+renderTranslateQuerySqlToAndromeda(connection, sql, cdm_database_schema = cdmDatabaseSchemaDremio, andromeda = andromeda, andromedaTableName = "test2", snakeCaseToCamelCase = TRUE)
+expect_equivalent(dplyr::collect(andromeda$test2)$rowCount[1], 125)
+
+disconnect(connection)
 
 # Get table names ----------------------------------------------------------------------
 
@@ -244,6 +276,12 @@ disconnect(connection)
 # Snowflake
 connection <- connect(connectionDetailsSnowflake)
 tables <- getTableNames(connection, cdmDatabaseSchemaSnowflake)
+expect_true("person" %in% tables)
+disconnect(connection)
+
+# Dremio
+connection <- connect(connectionDetailsDremio)
+tables <- getTableNames(connection, cdmDatabaseSchemaDremio)
 expect_true("person" %in% tables)
 disconnect(connection)
 
@@ -442,6 +480,38 @@ executeSql(connection, SqlRender::render("DROP TABLE @scratch_database_schema.in
 
 disconnect(connection)
 
+Dremio
+connection <- connect(connectionDetailsDremio)
+
+insertTable(connection = connection,
+            tableName = paste(scratchDatabaseSchemaDremio, "insert_test", sep= "."),
+            data = data,
+            createTable = TRUE,
+            tempTable = FALSE)
+
+# Check data on server is same as local
+data2 <- renderTranslateQuerySql(
+  connection = connection,
+  sql = "SELECT * FROM @scratch_database_schema.insert_test",
+  scratch_database_schema = scratchDatabaseSchemaDremio,
+  integer64AsNumeric = FALSE)
+names(data2) <- tolower(names(data2))
+data <- data[order(data$value), ]
+data2 <- data2[order(data2$value), ]
+row.names(data) <- NULL
+row.names(data2) <- NULL
+expect_equal(data, data2)
+
+# Check data types
+res <- dbSendQuery(connection, SqlRender::render("SELECT * FROM @scratch_database_schema.insert_test", scratch_database_schema = scratchDatabaseSchemaDremio))
+columnInfo <- dbColumnInfo(res)
+dbClearResult(res)
+expect_equal(as.character(columnInfo$field.type), c("DATE", "TIMESTAMP", "INTEGER", "DOUBLE", "CHARACTER VARYING", "BIGINT"))
+
+executeSql(connection, SqlRender::render("DROP TABLE @scratch_database_schema.insert_test", scratch_database_schema = scratchDatabaseSchemaDremio))
+
+disconnect(connection)
+
 # Test dropEmulatedTempTables ----------------------------------------------
 
 # BigQuery
@@ -496,6 +566,18 @@ droppedTables <- dropEmulatedTempTables(connection = connection, tempEmulationSc
 expect_equal(droppedTables, sprintf("%s.%stemp", scratchDatabaseSchemaSnowflake, SqlRender::getTempTablePrefix()))
 disconnect(connection)
 
+# Dremio
+connection <- connect(connectionDetailsDremio)
+insertTable(connection = connection,
+            tableName = "temp",
+            data = cars,
+            createTable = TRUE,
+            tempTable = TRUE,
+            tempEmulationSchema = scratchDatabaseSchemaDremio)
+
+droppedTables <- dropEmulatedTempTables(connection = connection, tempEmulationSchema = scratchDatabaseSchemaDremio)
+expect_equal(droppedTables, sprintf("%s.%stemp", scratchDatabaseSchemaDremio, SqlRender::getTempTablePrefix()))
+disconnect(connection)
 
 # Test hash computation ----------------------------------------------
 
@@ -594,6 +676,13 @@ dbClearResult(rowsAffected)
 
 disconnect(connection)
 
+# Dremio
+connection <- connect(connectionDetailsDremio)
+hash <- computeDataHash(connection = connection,
+                        databaseSchema = cdmDatabaseSchemaDremio)
+expect_true(is.character(hash))
+disconnect(connection)
+
 # Test dbplyr ------------------------------------------------------------------
 
 source("tests/testthat/dbplyrTestFunction.R")
@@ -620,6 +709,11 @@ options(sqlRenderTempEmulationSchema = scratchDatabaseSchemaSnowflake)
 testDbplyrFunctions(connectionDetails = connectionDetailsSnowflake, 
                     cdmDatabaseSchema = cdmDatabaseSchemaSnowflake)
 
+# Dremio
+# TODO currently does not work. This generates weird SQL statements and tries to compare doubles on int fields even without casting!
+options(sqlRenderTempEmulationSchema = scratchDatabaseSchemaDremio)
+testDbplyrFunctions(connectionDetails = connectionDetailsDremio,
+                    cdmDatabaseSchema = cdmDatabaseSchemaDremio)
 
 # Spark
 connectionDetails <- createConnectionDetails(dbms = "spark",

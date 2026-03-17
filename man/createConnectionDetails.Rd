@@ -17,6 +17,7 @@
 \item "sqlite extended" for SQLite with extended types (DATE and DATETIME)
 \item "spark" for Spark
 \item "snowflake" for Snowflake
+\item "dremio" for Dremio
 \item "iris" for InterSystems IRIS
 }}
 
@@ -186,6 +187,15 @@ Snowflake:
 \item \code{user}. The user name used to access the server.
 \item \code{password}. The password for that user.
 }
+
+Dremio:
+\itemize{
+\item \code{connectionString}. The connection string, (e.g.: starting with
+'jdbc:dremio://host:port').
+\item \code{user}. The user name used to access the server.
+\item \code{password}. The password for that user.
+}
+
 
 InterSystems IRIS:
 \itemize{

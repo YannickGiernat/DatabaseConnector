@@ -66,7 +66,7 @@ parseJdbcColumnData <- function(batchedQuery,
     columns[[i]] <- column
   }
   names(columns) <- rJava::.jcall(batchedQuery, "[Ljava/lang/String;", "getColumnNames")
-  
+
   # More efficient than as.data.frame, as it avoids converting row.names to character:
   columns <- structure(columns, class = "data.frame", row.names = seq_len(length(columns[[1]])))
   return(columns)
@@ -82,7 +82,7 @@ delayIfNecessary <- function(sql, regex, executionTimes, threshold) {
     currentTime <- Sys.time()
     lastExecutedTime <- executionTimes[[tableName]]
     if (!is.na(lastExecutedTime) && !is.null(lastExecutedTime)) {
-      delta <- difftime(currentTime, lastExecutedTime, units = "secs") 
+      delta <- difftime(currentTime, lastExecutedTime, units = "secs")
       if (delta < threshold) {
         Sys.sleep(threshold - delta)
       }
@@ -105,35 +105,125 @@ delayIfNecessaryForInsert <- function(sql) {
 # See https://github.com/tidyverse/dbplyr/issues/1186 and https://github.com/r-lib/rlang/issues/1619 for details
 sanitizeJavaErrorForRlang <- function(expr) { tryCatch(expr, error = function(cnd) stop(conditionMessage(cnd))) }
 
-lowLevelExecuteSql <- function(connection, sql) {
-  statement <- rJava::.jcall(connection@jConnection, "Ljava/sql/Statement;", "createStatement")
-  on.exit(sanitizeJavaErrorForRlang(rJava::.jcall(statement, "V", "close")))
-  if ((dbms(connection) == "spark") || (dbms(connection) == "iris")) {
-    # For some queries the DataBricks JDBC driver will throw an error saying no ROWCOUNT is returned
-    # when using executeLargeUpdate, so using execute instead.
-    # Also use this approach for IRIS JDBC driver, which does not support executeLargeUpdate() directly.
-    sanitizeJavaErrorForRlang(rJava::.jcall(statement, "Z", "execute", as.character(sql), check = FALSE))
-    rowsAffected <- rJava::.jcall(statement, "I", "getUpdateCount", check = FALSE)
-    if (rowsAffected == -1) {
-      rowsAffected <- 0
-    }
-  } else {
-    rowsAffected <- sanitizeJavaErrorForRlang(rJava::.jcall(statement, "J", "executeLargeUpdate", as.character(sql), check = FALSE))
+
+lowLevelExecuteSql <- function(connection, sql, verbose = FALSE) {
+
+  log_msg <- function(...) {
+    if (verbose) message("[lowLevelExecuteSql] ", ...)
   }
-  
-  if (dbms(connection) == "bigquery") {
+
+  log_msg("Starte SQL: ", sql)
+
+  statement <- rJava::.jcall(connection@jConnection, "Ljava/sql/Statement;", "createStatement")
+  on.exit({
+    if (!is.null(statement)) sanitizeJavaErrorForRlang(rJava::.jcall(statement, "V", "close", check = FALSE))
+  }, add = TRUE)
+
+  db <- dbms(connection)
+
+  if ((db == "spark") || (db == "iris")) {
+
+    log_msg("DBMS = ", db, " → execute() anstelle von executeLargeUpdate()")
+    sanitizeJavaErrorForRlang(rJava::.jcall(statement, "Z", "execute", as.character(sql), check = FALSE))
+
+    rowsAffected <- rJava::.jcall(statement, "I", "getUpdateCount", check = FALSE)
+    if (rowsAffected == -1) rowsAffected <- 0
+
+    log_msg("Rows affected: ", rowsAffected)
+
+  } else if (db == "dremio") {
+
+    log_msg("DBMS = dremio → starte erweiterten Sync‑Pfad …")
+
+    # Dremio signals async job completion via a ResultSet for DDL / CTAS statements.
+    # For DML (INSERT, UPDATE, DELETE, …) no ResultSet is produced and draining is
+    # unnecessary.  We therefore only drain ResultSets when the SQL is a
+    # CREATE TABLE (including CTAS) or DROP TABLE statement.
+    isDdlStatement <- grepl(
+      "^\\s*(CREATE\\s+(OR\\s+REPLACE\\s+)?TABLE|DROP\\s+TABLE)",
+      sql,
+      ignore.case = TRUE,
+      perl = TRUE
+    )
+
+    log_msg(if (isDdlStatement) "DDL/CTAS erkannt → ResultSets werden vollständig gelesen."
+            else "DML erkannt → ResultSets werden übersprungen.")
+
+    # -------------------------------------------------------------------------
+    # 1) Hauptausführung
+    # -------------------------------------------------------------------------
+    hasResult <- sanitizeJavaErrorForRlang(
+      rJava::.jcall(statement, "Z", "execute", as.character(sql), check = TRUE)
+    )
+
+    log_msg("Statement ausgeführt, beginne Drainen der JDBC‑ResultChains …")
+
+    rowsAffected <- 0
+    step <- 1
+
+    repeat {
+      if (hasResult) {
+        resultSet <- rJava::.jcall(statement, "Ljava/sql/ResultSet;", "getResultSet", check = FALSE)
+        if (!rJava::is.jnull(resultSet)) {
+          if (isDdlStatement) {
+            # IMPORTANT: fully drain the ResultSet before closing.
+            # For Dremio CTAS the ResultSet is the async job-completion stream.
+            # Calling close() immediately (without consuming rows) cancels the job
+            # before Dremio has committed the created table — the table then never
+            # appears in the catalog.  Reading until next() returns FALSE ensures
+            # the JDBC driver waits for the Dremio job to finish.
+            log_msg("  ResultSet #", step, " vorhanden → wird vollständig gelesen …")
+            while (rJava::.jcall(resultSet, "Z", "next", check = FALSE)) {}
+            log_msg("  ResultSet #", step, " vollständig gelesen → wird geschlossen")
+          } else {
+            log_msg("  ResultSet #", step, " vorhanden, aber kein DDL/CTAS → wird übersprungen")
+          }
+          tryCatch(rJava::.jcall(resultSet, "V", "close", check = FALSE), error = function(e) NULL)
+        } else {
+          log_msg("  ResultSet #", step, " = <NULL>")
+        }
+      } else {
+        updateCount <- rJava::.jcall(statement, "I", "getUpdateCount", check = FALSE)
+        if (updateCount == -1L) {
+          log_msg("  UpdateChain endet nach ", step - 1, " Iterationen.")
+          break
+        }
+        rowsAffected <- rowsAffected + updateCount
+        log_msg("  UpdateCount #", step, ": ", updateCount, " (Summe: ", rowsAffected, ")")
+      }
+
+      hasResult <- sanitizeJavaErrorForRlang(
+        rJava::.jcall(statement, "Z", "getMoreResults", check = TRUE)
+      )
+
+      step <- step + 1
+    }
+
+  } else {
+
+    log_msg("DBMS = ", db, " → Standard executeLargeUpdate()")
+
+    rowsAffected <- sanitizeJavaErrorForRlang(
+      rJava::.jcall(statement, "J", "executeLargeUpdate", as.character(sql), check = FALSE)
+    )
+
+    log_msg("Rows affected: ", rowsAffected)
+  }
+
+  if (db == "bigquery") {
     delayIfNecessaryForDdl(sql)
     delayIfNecessaryForInsert(sql)
   }
-  
+  log_msg("SQL vollständig abgeschlossen.")
+
   invisible(rowsAffected)
 }
 
 trySettingAutoCommit <- function(connection, value) {
   tryCatch(
-    {
-      rJava::.jcall(connection@jConnection, "V", "setAutoCommit", value)
-    },
+  {
+    rJava::.jcall(connection@jConnection, "V", "setAutoCommit", value)
+  },
     error = function(cond) {
       # do nothing
     }
@@ -145,7 +235,7 @@ lowLevelDbSendQuery <- function(conn, statement) {
     abort("Connection is closed")
   }
   dbms <- dbms(conn)
-  
+
   # For Oracle, remove trailing semicolon:
   statement <- gsub(";\\s*$", "", statement)
   tryCatch(
@@ -161,7 +251,7 @@ lowLevelDbSendQuery <- function(conn, statement) {
       rlang::abort(error$message)
     }
   )
-  
+
   result <- new("DatabaseConnectorJdbcResult",
                 content = batchedQuery,
                 type = "batchedQuery",

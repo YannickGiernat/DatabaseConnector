@@ -50,6 +50,79 @@ setMethod(
       return(tables)
     }
     
+    # --- Dremio: INFORMATION_SCHEMA query ---
+    if (dbms(conn) == "dremio") {
+      # In Dremio's INFORMATION_SCHEMA the catalog is ALWAYS the fixed string
+      # "DREMIO" (uppercase), regardless of source/space names.
+      # The full namespace path maps entirely to TABLE_SCHEMA, with each
+      # quoted identifier part unquoted and joined by ".":
+      #   '"storagegrid"."dremio-ohdsi-connector"."Synthea27NjParquet"'
+      #   -> TABLE_SCHEMA = 'storagegrid.dremio-ohdsi-connector.Synthea27NjParquet'
+      #
+      # Note: "TABLES" must be double-quoted — Dremio/Calcite treats it as a
+      # reserved keyword and throws a parse error without quotes.
+      #
+      # as.character() strips DBI::SQL and other character subclasses.
+      sq <- function(s) gsub("'", "''", s, fixed = TRUE)
+      if (!is.null(databaseSchema)) databaseSchema <- as.character(databaseSchema)
+
+      if (is.null(databaseSchema)) {
+        probeSql <- 'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'DREMIO\''
+      } else {
+        # Tokenize char-by-char, strip double-quotes from each part, rejoin with "."
+        parts   <- character(0)
+        current <- ""
+        in_quote <- FALSE
+        for (ch in strsplit(databaseSchema, "")[[1]]) {
+          if (identical(ch, '"')) {
+            in_quote <- !in_quote
+          } else if (identical(ch, '.') && !in_quote) {
+            parts   <- c(parts, current)
+            current <- ""
+          } else {
+            current <- paste0(current, ch)
+          }
+        }
+        parts <- c(parts, current)
+        parts <- parts[nzchar(parts)]  # drop empty strings
+        schema_val <- paste(parts, collapse = ".")
+        probeSql <- sprintf(
+          'SELECT TABLE_NAME FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'DREMIO\' AND TABLE_SCHEMA = \'%s\'',
+          sq(schema_val)
+        )
+      }
+
+      stmt <- rJava::.jcall(conn@jConnection, "Ljava/sql/Statement;", "createStatement")
+      rs <- tryCatch(
+        rJava::.jcall(stmt, "Ljava/sql/ResultSet;", "executeQuery", probeSql),
+        error = function(e) {
+          tryCatch(rJava::.jcall(stmt, "V", "close"), error = function(e2) NULL)
+          rlang::abort(e$message)
+        }
+      )
+      tables <- character()
+      while (rJava::.jcall(rs, "Z", "next")) {
+        tables <- c(tables, rJava::.jcall(rs, "S", "getString", "TABLE_NAME"))
+      }
+      tryCatch(rJava::.jcall(rs,   "V", "close"), error = function(e) NULL)
+      tryCatch(rJava::.jcall(stmt, "V", "close"), error = function(e) NULL)
+      if (length(tables) == 0 && !is.null(databaseSchema)) {
+        # Help the user diagnose a mismatch between their schema string and
+        # what Dremio actually stores in INFORMATION_SCHEMA."TABLES".
+        # The TABLE_SCHEMA value in Dremio is the source/space path as configured
+        # in Dremio (e.g. "nessie_storagegrid.OHDSI"), which may differ from the
+        # quoted identifier used in SQL (e.g. '"storagegrid"."OHDSI"').
+        warn(paste0(
+          "getTableNames returned no tables for databaseSchema = '", databaseSchema, "'.\n",
+          "The following SQL was executed:\n  ", probeSql, "\n",
+          "To verify, run this in your R session to see all available TABLE_SCHEMA values:\n",
+          '  querySql(connection, \'SELECT DISTINCT TABLE_SCHEMA FROM INFORMATION_SCHEMA."TABLES" WHERE TABLE_CATALOG = \'\'DREMIO\'\' LIMIT 30\')'
+        ))
+      }
+      return(tables)
+    }
+    # --- end Dremio ---
+
     if (is.null(databaseSchema)) {
       database <- rJava::.jnull("java/lang/String")
       schema <- rJava::.jnull("java/lang/String")
@@ -106,6 +179,10 @@ setMethod(
 #'
 #' @export
 getTableNames <- function(connection, databaseSchema = NULL, cast = "lower") {
+  # Strip DBI::SQL and other character subclasses (e.g. from DBI::SQL(...) wrapping)
+  # so that all downstream code receives a plain character scalar.
+  if (!is.null(databaseSchema)) databaseSchema <- as.character(databaseSchema)
+
   errorMessages <- checkmate::makeAssertCollection()
   checkmate::assertTRUE(DBI::dbIsValid(connection))
   checkmate::assertCharacter(databaseSchema, len = 1, null.ok = TRUE, add = errorMessages)

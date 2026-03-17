@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-getSqlDataTypes <- function(column, dbms) { 
+getSqlDataTypes <- function(column, dbms) {
   if (is.integer(column)) {
     return("INTEGER")
   } else if (is(column, "POSIXct") | is(column, "POSIXt")) {
@@ -221,7 +221,7 @@ insertTable.DatabaseConnectorJdbcConnection <- function(connection,
     bulkLoad <- useMppBulkLoad
   }
   bulkLoad <- (!is.null(bulkLoad) && bulkLoad == "TRUE")
-  
+
   if (is_installed("Andromeda") && Andromeda::isAndromedaTable(data)) {
     warn("Batch-wise uploading of Andromeda tables currently not supported. Loading entire table in memory.",
          .frequency = "regularly",
@@ -271,6 +271,7 @@ insertTable.DatabaseConnectorJdbcConnection <- function(connection,
   useBulkLoad <- (bulkLoad && dbms %in% c("hive", "redshift") && createTable) ||
     (bulkLoad && dbms %in% c("pdw", "postgresql") && !tempTable)
   useCtasHack <- dbms %in% c("pdw", "redshift", "bigquery", "hive") && createTable && nrow(data) > 0 && !useBulkLoad
+  useSingleInsert <- dbms %in% c("dremio") && nrow(data) > 0 && !useBulkLoad
   if (dbms == "bigquery" && useCtasHack && is.null(tempEmulationSchema)) {
     abort("tempEmulationSchema is required to use insertTable with bigquery when inserting into a new table")
   }
@@ -292,9 +293,9 @@ insertTable.DatabaseConnectorJdbcConnection <- function(connection,
   }
   
   if (createTable && !useCtasHack && !(bulkLoad && dbms == "hive")) {
-    
+
     sql <- paste("CREATE TABLE ", sqlTableName, " (", sqlTableDefinition, ");", sep = "")
-    
+
     renderTranslateExecuteSql(
       connection = connection,
       sql = sql,
@@ -324,6 +325,8 @@ insertTable.DatabaseConnectorJdbcConnection <- function(connection,
   } else if (useCtasHack) {
     # Inserting using CTAS hack ----------------------------------------------------------------
     ctasHack(connection, sqlTableName, tempTable, sqlFieldNames, sqlDataTypes, data, progressBar, tempEmulationSchema)
+  } else if(useSingleInsert) {
+    singleInsert(connection, sqlTableName, tempTable, sqlFieldNames, sqlDataTypes, data, progressBar, tempEmulationSchema)
   } else if (dbms == "spark") {
     multiValuesInsert(connection, sqlTableName, sqlFieldNames, sqlDataTypes, data, progressBar, tempEmulationSchema)
   } else {
@@ -382,7 +385,7 @@ insertTable.DatabaseConnectorJdbcConnection <- function(connection,
           } else if (is(column, "Date")) {
             rJava::.jcall(batchedInsert, "V", "setDate", i, as.character(column))
           } else  if (is.logical(column)) {
-            # encode column as -1 (NA), 1 (TRUE), 0 (FALSE) to pass logical NAs into Java 
+            # encode column as -1 (NA), 1 (TRUE), 0 (FALSE) to pass logical NAs into Java
             column <- vapply(as.integer(column), FUN = function(x) ifelse(is.na(x), -1L, x), FUN.VALUE = integer(1L))
             rJava::.jcall(batchedInsert, "V", "setBoolean", i, column)
           } else {
@@ -447,7 +450,7 @@ insertTable.default <- function(connection,
                                 useMppBulkLoad = Sys.getenv("USE_MPP_BULK_LOAD"),
                                 progressBar = FALSE,
                                 camelCaseToSnakeCase = FALSE) {
-  
+
   if (camelCaseToSnakeCase) {
     colnames(data) <- SqlRender::camelCaseToSnakeCase(colnames(data))
   }

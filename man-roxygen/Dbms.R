@@ -11,5 +11,6 @@
 #' - "sqlite extended" for SQLite with extended types (DATE and DATETIME)
 #' - "spark" for Spark
 #' - "snowflake" for Snowflake
+#' - "dremio" for Dremio
 #' - "iris" for InterSystems IRIS
 #'                           
