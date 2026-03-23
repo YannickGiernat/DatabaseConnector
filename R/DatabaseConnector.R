@@ -59,7 +59,7 @@ NULL
 #' functions to point to the driver. Alternatively, you can set the 'DATABASECONNECTOR_JAR_FOLDER' environmental
 #' variable, for example in your .Renviron file (recommended).
 #'
-#' # SQL Server, Oracle, PostgreSQL, PDW, Snowflake, Spark, RedShift, Azure Synapse, BigQuery, InterSystems IRIS
+#' # SQL Server, Oracle, PostgreSQL, PDW, Snowflake, Dremio, Spark, RedShift, Azure Synapse, BigQuery, InterSystems IRIS
 #' 
 #' Use the [downloadJdbcDrivers()] function to download these drivers from the OHDSI GitHub pages.
 #'

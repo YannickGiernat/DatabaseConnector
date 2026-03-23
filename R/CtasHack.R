@@ -137,7 +137,7 @@ ctasHack <- function(connection, sqlTableName, tempTable, sqlFieldNames, sqlData
         MARGIN = 1,
         FUN = formatRow,
         aliases = varAliases,
-        castValues = dbms(connection) %in% c("bigquery", "hive"),
+        castValues = dbms(connection) %in% c("bigquery", "hive", "dremio"),
         sqlDataTypes = sqlDataTypes
       )),
       collapse = "\nUNION ALL\nSELECT "
@@ -191,7 +191,7 @@ multiValuesInsert <- function(connection, sqlTableName, sqlFieldNames, sqlDataTy
   if (progressBar) {
     pb <- txtProgressBar(style = 3)
   }
-  
+
   if (nrow(data) > 0) {
     for (start in seq(1, nrow(data), by = batchSize)) {
       if (progressBar) {
@@ -200,7 +200,7 @@ multiValuesInsert <- function(connection, sqlTableName, sqlFieldNames, sqlDataTy
       end <- min(start + batchSize - 1, nrow(data))
       batch <- toStrings(data[start:end, , drop = FALSE], sqlDataTypes)
       valuesString <- paste("(", paste(apply(batch, MARGIN = 1, FUN = paste, collapse = ","), collapse = "),("), ")")
-        
+
       sql <- "INSERT INTO @table (@fields) VALUES @values;"
       sql <- SqlRender::render(sql = sql,
                                table = sqlTableName,

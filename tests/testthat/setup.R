@@ -14,6 +14,7 @@ if (Sys.getenv("DONT_DOWNLOAD_JDBC_DRIVERS", "") != "TRUE") {
   downloadJdbcDrivers("redshift")
   downloadJdbcDrivers("spark")
   downloadJdbcDrivers("snowflake")
+  downloadJdbcDrivers("dremio")
   if (.Platform$OS.type == "windows") {
     downloadJdbcDrivers("bigquery")
   }
@@ -147,6 +148,21 @@ if (Sys.getenv("CDM_SNOWFLAKE_CONNECTION_STRING") != "") {
     NULL,
     cdmDatabaseSchema = Sys.getenv("CDM_SNOWFLAKE_CDM53_SCHEMA"),
     tempEmulationSchema = Sys.getenv("CDM_SNOWFLAKE_OHDSI_SCHEMA")
+  )
+}
+
+# Dremio --------------------------------------------------------------------------
+if (Sys.getenv("CDM_DREMIO_CONNECTION_STRING") != "") {
+  testServers[[length(testServers) + 1]] <- list(
+    connectionDetails = details <- createConnectionDetails(
+      dbms = "dremio",
+      user = Sys.getenv("CDM_DREMIO_USER"),
+      password = URLdecode(Sys.getenv("CDM_DREMIO_PASSWORD")),
+      connectionString = Sys.getenv("CDM_DREMIO_CONNECTION_STRING")
+    ),
+    NULL,
+    cdmDatabaseSchema = Sys.getenv("CDM_DREMIO_CDM53_SCHEMA"),
+    tempEmulationSchema = Sys.getenv("CDM_DREMIO_OHDSI_SCHEMA")
   )
 }
 

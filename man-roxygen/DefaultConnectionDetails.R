@@ -138,7 +138,14 @@
 #'         'jdbc:snowflake://host:port/?db=database').
 #'  - `user`. The user name used to access the server.
 #'  - `password`. The password for that user.
-#' 
+#'
+#' Dremio:
+#'  Dremio documentation: https://docs.dremio.com/software/drivers/jdbc/
+#'
+#'  - `connectionString`. The connection string (e.g. jdbc:dremio:direct=<DREMIO_COORDINATOR>:31010[;schema=<OPTIONAL_SCHEMA>]).
+#'  - `user`. The user name used to access the server.
+#'  - `password`. The password for that user.
+#'
 #' InterSystems IRIS:
 #'  - `connectionString`. The connection string (e.g. starting with
 #'         'jdbc:IRIS://host:port/namespace'). Alternatively, you can provide

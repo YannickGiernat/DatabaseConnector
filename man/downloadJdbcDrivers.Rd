@@ -20,6 +20,7 @@ downloadJdbcDrivers(
 \item "oracle" for Oracle
 \item "spark" for Spark
 \item "snowflake" for Snowflake
+\item "dremio" for Dremio
 \item "bigquery" for Google BigQuery
 \item "iris" for InterSystems IRIS
 \item "all" for all aforementioned platforms
@@ -47,6 +48,7 @@ The following versions of the JDBC drivers are currently used:
 \item Oracle: V19.8
 \item Spark (Databricks): V2.6.36
 \item Snowflake: V3.24.0
+\item Dremio: V26.0.0
 \item BigQuery: v1.3.2.1003
 \item InterSystems IRIS: v3.10.2
 }

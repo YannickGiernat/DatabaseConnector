@@ -30,6 +30,7 @@ jdbcDrivers <- new.env()
 #' - "oracle" for Oracle
 #' - "spark" for Spark
 #' - "snowflake" for Snowflake
+#' - "dremio" for Dremio
 #' - "bigquery" for Google BigQuery
 #' - "iris" for InterSystems IRIS
 #' - "all" for all aforementioned platforms
@@ -46,6 +47,7 @@ jdbcDrivers <- new.env()
 #' - Oracle: V19.8
 #' - Spark (Databricks): V2.6.36
 #' - Snowflake: V3.24.0
+#' - Dremio: V26.0.0
 #' - BigQuery: v1.3.2.1003
 #' - InterSystems IRIS: v3.10.2
 #' 
@@ -82,7 +84,7 @@ downloadJdbcDrivers <- function(dbms, pathToDriver = Sys.getenv("DATABASECONNECT
     dir.create(pathToDriver, recursive = TRUE)
   }
 
-  stopifnot(is.character(dbms), length(dbms) == 1, dbms %in% c("all", "postgresql", "redshift", "sql server", "oracle", "pdw", "snowflake", "spark", "bigquery", "iris"))
+  stopifnot(is.character(dbms), length(dbms) == 1, dbms %in% c("all", "postgresql", "redshift", "sql server", "oracle", "pdw", "snowflake", "dremio", "spark", "bigquery", "iris"))
 
   if (dbms == "pdw" || dbms == "synapse") {
     dbms <- "sql server"
@@ -97,7 +99,8 @@ downloadJdbcDrivers <- function(dbms, pathToDriver = Sys.getenv("DATABASECONNECT
     5,spark,DatabricksJDBC42-2.6.36.1062.zip,https://databricks-bi-artifacts.s3.us-east-2.amazonaws.com/simbaspark-drivers/jdbc/2.6.36/
     6,snowflake,snowflake-jdbc-3.24.0.jar,https://repo1.maven.org/maven2/net/snowflake/snowflake-jdbc/3.24.0/
     7,bigquery,SimbaJDBCDriverforGoogleBigQuery42_1.6.2.1003.zip,https://storage.googleapis.com/simba-bq-release/jdbc/
-    8,iris,intersystems-jdbc-3.10.2.jar,https://repo1.maven.org/maven2/com/intersystems/intersystems-jdbc/3.10.2/"
+    8,iris,intersystems-jdbc-3.10.2.jar,https://repo1.maven.org/maven2/com/intersystems/intersystems-jdbc/3.10.2/
+    9,dremio,dremio-jdbc-driver-LATEST.jar,https://download.dremio.com/jdbc-driver/"
   )
 
   if (dbms == "all") {

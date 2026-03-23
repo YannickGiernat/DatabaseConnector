@@ -71,8 +71,8 @@ sql_query_select.DatabaseConnectorJdbcConnection <- function(con,
   )
 }
 
-# Export a sql_translation method for JDBC connections that allows dplyr code to 
-# be correctly translated to SQL code. These functions are 
+# Export a sql_translation method for JDBC connections that allows dplyr code to
+# be correctly translated to SQL code. These functions are
 # imported from the dbplyr package.
 
 #' @export
@@ -97,13 +97,13 @@ sql_translation.DatabaseConnectorJdbcConnection <- function(con) {
 # See https://github.com/OHDSI/DatabaseConnector/issues/324
 
 #' @export
-#' @importFrom dbplyr sql_translation 
+#' @importFrom dbplyr sql_translation
 sql_translation.DatabaseConnectorDbiConnection <- function(con) {
-  
+
   switch(dbms(con),
     "sqlite" = utils::getFromNamespace("sql_translation.SQLiteConnection", "dbplyr")(con),
     "duckdb" = utils::getFromNamespace("sql_translation.duckdb_connection", "duckdb")(con),
-    NextMethod()) 
+    NextMethod())
 }
 
 

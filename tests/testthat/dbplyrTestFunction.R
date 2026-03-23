@@ -16,12 +16,15 @@ testDbplyrFunctions <- function(connectionDetails, cdmDatabaseSchema) {
   } else {
     stop("person table not found in cdm schema!")
   }
-  
-  person <- tbl(connection, inDatabaseSchema(cdmDatabaseSchema, personTableName)) %>% 
+
+  db <- dbms(connectionDetails)
+  isDremio <- db == "dremio"
+
+  person <- tbl(connection, inDatabaseSchema(cdmDatabaseSchema, personTableName)) %>%
     rename_all(tolower)
   observationPeriod <- tbl(connection, inDatabaseSchema(cdmDatabaseSchema, observationPeriodTableName)) %>%
     rename_all(tolower)
-  
+
   # Test filter, arrange, relocate, distinct -----------------------------------
   nMales <- person %>%
     filter(.data$gender_concept_id == 8507) %>%
@@ -41,9 +44,9 @@ testDbplyrFunctions <- function(connectionDetails, cdmDatabaseSchema) {
   #   # relocate(duration) %>% # relocate of field containing custom function no longer works in dbplr 2.3.1.
   #   head(1) %>%
   #   collect()
-  # 
+  #
   # expect_gt(longestObsPeriod$duration, 1)
-  
+
   # translation of year() not correct on sqlite
   if (!(dbms(connection) %in% c("sqlite"))) {
    topAges <- person %>%
@@ -57,10 +60,9 @@ testDbplyrFunctions <- function(connectionDetails, cdmDatabaseSchema) {
    expect_gt(nrow(topAges), 1)
  }
 
-
   # Test copy_inline -----------------------------------------------------------
-  # wrong translation, we can solve it locally (see backend-DatabaseConnector, commented out lines), but solution needs to be included in dbplyr 
-  if (!(dbms(connection) %in% c("redshift", "oracle", "sql server", "snowflake", "bigquery"))) {
+  # wrong translation, we can solve it locally (see backend-DatabaseConnector, commented out lines), but solution needs to be included in dbplyr
+  if (!(dbms(connection) %in% c("redshift", "oracle", "sql server", "snowflake", "bigquery", "dremio"))) {
     rows <- dbplyr::copy_inline(connection, mtcars) %>%
       filter(hp > 200) %>%
       arrange(wt, mpg) %>%
@@ -92,7 +94,7 @@ testDbplyrFunctions <- function(connectionDetails, cdmDatabaseSchema) {
   
   # Test creation of temp tables -----------------------------------------------
   # issues with temp emulation with oracle and sql server when Analyze happens as part of copy_to
-  if (!(dbms(connection) %in% c("oracle", "sql server", "snowflake", "spark", "bigquery", "postgresql"))) {
+  if (!(dbms(connection) %in% c("oracle", "sql server", "snowflake", "spark", "bigquery", "postgresql", "dremio"))) {
     cars2 <- copy_to(connection, cars, overwrite = TRUE)
     cars2 <- cars2 %>% collect()
     expect_equivalent(arrange(cars, speed, dist), arrange(cars2, speed, dist))
@@ -123,9 +125,9 @@ testDbplyrFunctions <- function(connectionDetails, cdmDatabaseSchema) {
       collect()
     expect_equal(result$person_name, "Pedro")
   }
-  
+
   # Test joins and unions ------------------------------------------------------
-  
+
   # Casting duration to numeric because platforms like SQL Server compute the mean by first computing the sum, which
   # will not fit in an integer:
   # durationDist <- person %>%
@@ -137,7 +139,7 @@ testDbplyrFunctions <- function(connectionDetails, cdmDatabaseSchema) {
   #             max_duration = max(duration, na.rm = TRUE),
   #             count_duration = n()) %>%
   #   collect()
-  # 
+  #
   # expect_equal(nrow(durationDist), 2)
   
   resultOfAntiJoin <- observationPeriod %>% 
@@ -178,10 +180,10 @@ testDbplyrFunctions <- function(connectionDetails, cdmDatabaseSchema) {
   #   filter(dateDiff("day", observation_period_start_date, observation_period_end_date) > 365) %>%
   #   count() %>%
   #   pull()
-  # 
+  #
   # expect_gt(nObsOverOneYear, 1)
-  
-  
+
+
   ## In redshift eoMonth() must become LAST_DAY(), is not translated correctly. as.integer() is also needed to cast the float to integer for dateAdd.
   # testData <- observationPeriod %>%
   #   mutate(plus_one_date = dateAdd("day", as.integer(1), observation_period_start_date),
@@ -192,7 +194,7 @@ testDbplyrFunctions <- function(connectionDetails, cdmDatabaseSchema) {
   #   mutate(is_later = if_else(plus_one_date > observation_period_start_date, 1, 0)) %>%
   #   head(1) %>%
   #   collect()
-  # 
+  #
   # expect_equal(as.Date(testData$plus_one_date), dateAdd("day", 1, testData$observation_period_start_date))
   # expect_equal(testData$end_of_month_date, eoMonth(testData$observation_period_start_date))
   # expect_equal(testData$obs_year, year(testData$observation_period_start_date))

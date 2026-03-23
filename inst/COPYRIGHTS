@@ -63,4 +63,13 @@ The package DatabaseConnector includes other software components. The following 
    License Information: https://github.com/snowflakedb/snowflake-jdbc/blob/master/LICENSE.txt
 
    Related JARs: snowflake-jdbc-*.jar
+
+** Dremio JDBC driver
+
+   Copyright © 2015-2025 Dremio Inc.
+
+   Project Website: https://docs.dremio.com/software/drivers/jdbc/
+   License Information: Apache License: https://github.com/dremio/dremio-oss/blob/master/client/jdbc/src/main/java/com/dremio/jdbc/Driver.java
+
+   Related JARs: dremio-jdbc-*.jar
    
